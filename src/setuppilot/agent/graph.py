@@ -60,7 +60,6 @@ class RunState(TypedDict, total=False):
     dest_dir: str
     use_docker: bool
     repo_dir: str
-    file_count: int
     candidates: list[dict]
     conflicts: list[str]
     notes: list[str]
@@ -150,7 +149,7 @@ def _recorded(name: str, deps: AgentDeps, fn: NodeFn) -> Callable[[RunState], di
         started = time.monotonic()
         try:
             if deps.runs.get_run(state["run_id"]).status == "cancelled":
-                raise RunCancelled("You cancelled this run.", details="Nothing more was run.")
+                raise _cancelled()
             if steps >= deps.settings.agent.max_steps:
                 raise TooManySteps(
                     "The run took too many steps and was stopped.",
@@ -214,7 +213,7 @@ def _scan(state: RunState) -> tuple[dict, StepNote]:
             "folder yourself if you trust the repo, then start a new run.",
         )
     summary = f"{len(scan.files)} files; {len(scan.skipped_symlinks)} links not followed."
-    return {"file_count": len(scan.files)}, StepNote(summary)
+    return {}, StepNote(summary)
 
 
 def _detect(state: RunState) -> tuple[dict, StepNote]:
@@ -423,7 +422,7 @@ def _execute(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
     if output.exit_code != 0 and item["kind"] != "check":
         update["error"] = _error(
             InstallFailed(
-                f"`{item['text']}` failed with exit code {output.exit_code}.",
+                f"`{arguments['command']}` failed with exit code {output.exit_code}.",
                 details=output.output_tail[-_STATE_OUTPUT_CHARS:],
             )
         )
@@ -497,10 +496,15 @@ def _verify(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
 def _report(deps: AgentDeps, state: RunState) -> dict:
     """Write the report and finish the run. This step never fails: the run must end clearly."""
     started = time.monotonic()
-    is_verified = bool(state.get("is_verified")) and not state.get("error")
     error = state.get("error")
-    # Only short facts SetupPilot itself wrote: no paths, timings or raw command output, so
-    # repo text cannot steer the summary and the same run always makes the same prompt.
+    # Cancel is saved by another thread. A command it kills comes back as a plain failure, and
+    # verify leads straight here, so the saved status decides.
+    is_cancelled = deps.runs.get_run(state["run_id"]).status == "cancelled"
+    if is_cancelled:
+        error = _error(_cancelled())
+    is_verified = bool(state.get("is_verified")) and not error
+    # Short facts only (no paths, timings or raw output), so the same run makes the same prompt.
+    # README commands and readme_mentions are repo text; REPORT_SYSTEM marks all facts as data.
     facts = {
         "repo": state.get("repo_url"),
         "stack": _key(state["chosen"]) if state.get("chosen") else None,
@@ -516,7 +520,6 @@ def _report(deps: AgentDeps, state: RunState) -> dict:
         "notes": state.get("notes", []) + state.get("conflicts", []),
     }
     report, tokens, model = _plain_report(facts), 0, None
-    is_cancelled = bool(error) and error["error_type"] == "RunCancelled"
     if deps.llm is not None and not is_cancelled:
         try:
             result = deps.llm.complete(
@@ -540,8 +543,8 @@ def _report(deps: AgentDeps, state: RunState) -> dict:
     )
     note = StepNote("Wrote the report.", "llm" if model else None, None, None, tokens, model)
     _save_step(deps, state["run_id"], "report", note, None, started)
-    update = {"report": report, "is_verified": is_verified, "steps": state.get("steps", 0) + 1}
-    return update
+    update = {"report": report, "is_verified": is_verified, "error": error}
+    return update | {"steps": state.get("steps", 0) + 1}
 
 
 def _verdict(facts: dict) -> str:
@@ -603,6 +606,10 @@ def _candidate(data: dict) -> StackCandidate:
 
 def _key(candidate: dict) -> str:
     return f"{candidate['stack']}/{candidate['manager']}"
+
+
+def _cancelled() -> RunCancelled:
+    return RunCancelled("You cancelled this run.", details="Nothing more was run.")
 
 
 def _error(error: SetupPilotError) -> dict:

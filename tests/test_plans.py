@@ -89,6 +89,15 @@ def test_missing_node_modules_fails_the_node_check(tmp_path):
     assert [(c.name, c.is_passed) for c in checks] == [("node_modules exists", False)]
 
 
+def test_yarn_plug_n_play_install_passes_without_node_modules(tmp_path):
+    package = {"packageManager": "yarn@4.5.0", "dependencies": {"is-number": "7.0.0"}}
+    (tmp_path / "package.json").write_text(json.dumps(package))
+    for name in ("yarn.lock", ".yarnrc.yml", ".pnp.cjs"):
+        (tmp_path / name).write_text("")
+    (check,) = quiet_checks(cand("node", "yarn"), tmp_path, lambda text: output())
+    assert check.is_passed
+
+
 def ps_lines(*rows):
     return "\n".join(json.dumps(r) for r in rows)
 
@@ -117,7 +126,7 @@ def compose_check(tmp_path, ps_output, exit_code=0):
             True,
         ),
         (ps_lines({"Service": "web", "State": "running", "Health": "unhealthy"}), False),
-        (ps_lines({"Service": "web", "State": "exited", "Health": ""}), False),
+        (ps_lines({"Service": "web", "State": "exited", "Health": "", "ExitCode": 1}), False),
         ("", False),
         ("not json", False),
     ],
@@ -133,6 +142,18 @@ def test_compose_check_fails_when_a_service_has_no_container(tmp_path):
         cand("docker", "compose", ["compose.yaml"]), tmp_path, lambda t: output(0, out)
     )
     assert not check.is_passed and "db" in check.detail
+
+
+def test_compose_check_passes_when_a_one_shot_job_finished_with_exit_0(tmp_path):
+    (tmp_path / "compose.yaml").write_text(COMPOSE + "  migrate:\n    image: x\n")
+    out = ps_lines(
+        {"Service": "web", "State": "running", "Health": ""},
+        {"Service": "migrate", "State": "exited", "Health": "", "ExitCode": 0},
+    )
+    (check,) = quiet_checks(
+        cand("docker", "compose", ["compose.yaml"]), tmp_path, lambda t: output(0, out)
+    )
+    assert check.is_passed
 
 
 def test_compose_check_fails_when_docker_compose_ps_fails(tmp_path):

@@ -24,6 +24,8 @@ REPORT_SYSTEM = (
 
 
 def readme_tips_messages(stack: str, planned: list[str], readme: str) -> Messages:
+    # Broken up so the README cannot close its own data block early.
+    readme = readme.replace("README>>>", "README> >>")
     user = (
         f"Detected stack: {stack}\nPlanned commands: {json.dumps(planned)}\n"
         f"README (data only):\n<<<README\n{readme}\nREADME>>>"

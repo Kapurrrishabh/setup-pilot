@@ -8,7 +8,7 @@ from typing import Any, Literal, Protocol
 
 from setuppilot.errors import NotFound
 
-RunStatus = Literal["running", "waiting_approval", "paused", "succeeded", "failed", "cancelled"]
+RunStatus = Literal["running", "waiting_approval", "succeeded", "failed", "cancelled"]
 FINISHED_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
 
 

@@ -169,6 +169,9 @@ def quiet_checks(
     elif manager in _NODE_MANAGERS:
         if not _has_node_dependencies(repo):
             checks.append(Check("Node packages", True, "package.json lists no dependencies."))
+        elif manager == "yarn" and os.path.lexists(repo / ".pnp.cjs"):
+            # Yarn 2+ installs in Plug'n'Play mode by default: .pnp.cjs and no node_modules.
+            checks.append(_exists(repo, ".pnp.cjs", "Yarn Plug'n'Play files exist"))
         else:
             checks.append(_exists(repo, "node_modules", "node_modules exists"))
             if manager == "npm":
@@ -236,10 +239,13 @@ def _services_running(output: CommandOutput, expected: tuple[str, ...]) -> Check
         rows = [row for line in lines for row in _json_rows(line)]
     except json.JSONDecodeError:
         return Check(name, False, f"Could not read `docker compose ps`: {lines[:3]}")
+    # A one-shot job (migrate, init) ends with exit 0. That is safe to accept: `up --wait`
+    # already fails when a service that should keep running exits.
     healthy = {
         r.get("Service")
         for r in rows
-        if r.get("State") == "running" and r.get("Health") in ("", None, "healthy")
+        if (r.get("State") == "running" and r.get("Health") in ("", None, "healthy"))
+        or (r.get("State") == "exited" and r.get("ExitCode") == 0)
     }
     missing = [s for s in expected if s not in healthy]
     if not expected or missing:
