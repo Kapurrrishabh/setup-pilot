@@ -1,14 +1,25 @@
 import json
+from dataclasses import replace
 
 import pytest
 
-from setuppilot.chat.bot import NOT_FOUND, OUT_OF_SCOPE, ChatSession, RepoChatbot, index_repo
+from setuppilot.chat import cli as chat_cli
+from setuppilot.chat.bot import (
+    NOT_FOUND,
+    OUT_OF_SCOPE,
+    AnswerCutOff,
+    ChatSession,
+    RepoChatbot,
+    index_repo,
+)
 from setuppilot.chat.chunks import Chunk, chunk_documents
 from setuppilot.chat.collect import Document, collect_documents
 from setuppilot.chat.index import InMemoryChunkIndex
 from setuppilot.config import load_settings
+from setuppilot.errors import LLMUnavailable
 from setuppilot.tools.scan import scan_repo
 from tests.fakes import FakeEmbedder, FakeTransport, make_client, make_repo, reply
+from tests.test_chat_eval import stores_with
 from tests.test_config import REAL_CONFIG
 
 SETTINGS = load_settings(REAL_CONFIG)
@@ -120,6 +131,22 @@ def test_answer_without_a_real_source_becomes_i_dont_know(indexed, llm_text):
     assert (answer.text, answer.is_found) == (NOT_FOUND, False)
 
 
+@pytest.mark.parametrize(
+    ("question", "cited", "path"),
+    [("What license does Demo use?", "[1] LICENSE", "LICENSE"),
+     ("How do I install Demo?", "README.md > Install", "README.md")],
+)  # fmt: skip
+def test_sources_cited_with_the_prompt_label_are_kept(indexed, question, cited, path):
+    chatbot, _ = bot(indexed, answer_json("An answer.", [cited]))
+    assert chatbot.ask(ChatSession("someone/demo"), question).sources == [path]
+
+
+def test_cut_off_answer_is_an_error_not_i_dont_know(indexed):
+    chatbot, _ = bot(indexed, reply('{"answer": "It uses the MI', is_truncated=True))
+    with pytest.raises(AnswerCutOff, match="cut off"):
+        chatbot.ask(ChatSession("someone/demo"), "What license does Demo use?")
+
+
 def test_prompt_marks_repo_text_as_data_and_asks_for_json(indexed):
     chatbot, transport = bot(indexed, answer_json("ok", ["LICENSE"]))
     chatbot.ask(ChatSession("someone/demo"), "What license does Demo use?")
@@ -156,6 +183,34 @@ def test_long_chat_is_summarised_by_the_small_model(indexed):
     chatbot.ask(session, "How do I open a pull request against the main branch?")
     assert transport.calls[-1] == "small-model"
     assert session.summary == "They asked about the license." and len(session.turns) == 1
+
+
+def test_turns_not_yet_summarised_still_go_into_the_prompt(indexed):
+    config = CHAT.model_copy(update={"history_turns": 2})
+    answers = [answer_json("MIT.", ["LICENSE"]) for _ in range(4)]
+    transport = FakeTransport(*answers, reply("They asked about the license."))
+    chatbot = RepoChatbot(config, indexed, FakeEmbedder(), make_client(transport))
+    session = ChatSession("someone/demo")
+    for n in range(4):
+        chatbot.ask(session, f"What license does Demo use, {n}?")
+    assert "Q: What license does Demo use, 0?" in transport.requests[3]["messages"][1]["content"]
+
+
+@pytest.mark.parametrize(
+    "summary_step",
+    [LLMUnavailable("Daily limit.", "x"), reply("They asked", is_truncated=True), reply("")],
+    ids=["daily limit", "cut off", "empty"],
+)
+def test_failed_summary_keeps_the_old_turns_for_the_next_prompt(indexed, summary_step):
+    config = CHAT.model_copy(update={"history_turns": 1})
+    answers = [answer_json("MIT.", ["LICENSE"]) for _ in range(3)]
+    transport = FakeTransport(*answers[:2], summary_step, answers[2], reply("They asked about it."))
+    chatbot = RepoChatbot(config, indexed, FakeEmbedder(), make_client(transport))
+    session = ChatSession("someone/demo")
+    for n in range(3):
+        chatbot.ask(session, f"What license does Demo use, {n}?")
+    # Calls: question 0, question 1, the failed summary, then question 2.
+    assert "Q: What license does Demo use, 0?" in transport.requests[3]["messages"][1]["content"]
 
 
 def test_unindexed_repo_is_a_clear_error(indexed):
@@ -261,7 +316,11 @@ def test_source_files_named_like_docs_are_still_code_and_deep_licenses_are_skipp
 @pytest.mark.parametrize(
     "question",
     ["How do I write tests for a new feature?", "How can I fix a bug and send a pull request?",
-     "What does this code do?", "How do I create a feature branch?"],
+     "What does this code do?", "How do I create a feature branch?",
+     "Does this tool generate the code for API clients?",
+     "Can it generate a Python class from a JSON schema?", "Debug mode: how do I turn it on?",
+     "Optimize flag - what does it do?", "Help me fix this error when I run npm install",
+     "Can you fix the install error I get?"],
 )  # fmt: skip
 def test_questions_about_contributing_are_in_scope(indexed, question):
     chatbot, _ = bot(indexed, answer_json("Open a pull request.", ["CONTRIBUTING.md"]))
@@ -270,8 +329,13 @@ def test_questions_about_contributing_are_in_scope(indexed, question):
 
 @pytest.mark.parametrize(
     "question",
-    ["Write me a function that parses slides", "Fix my code please", "Refactor this class"],
-)
+    ["Write me a function that parses slides", "Fix my code please", "Refactor this class",
+     "write code to parse dates", "Can you fix this bug in cli.py?",
+     "Write a test for the slugify function", "Implement a new feature",
+     "Hey, can you write me a function that parses slides?", "I need you to fix my code",
+     "Can you help me write a function that uses this lib?",
+     "Give me a Python script that uses this library"],
+)  # fmt: skip
 def test_requests_to_write_or_change_code_are_refused(indexed, question):
     chatbot, _ = bot(indexed)
     assert chatbot.ask(ChatSession("someone/demo"), question).text == OUT_OF_SCOPE
@@ -323,3 +387,21 @@ def test_unfinished_chat_clone_is_refused_not_indexed(tmp_path):
     make_repo(tmp_path / "someone" / "demo", {".git/HEAD": "ref"})
     with pytest.raises(CloneFailed, match="unfinished clone"):
         chat_repo_folder(settings, "https://github.com/someone/demo")
+
+
+def test_cli_chat_without_a_database_says_the_index_was_not_kept(capsys):
+    stores = replace(stores_with(InMemoryChunkIndex()), database_warning="No database.")
+    with pytest.raises(SystemExit):
+        chat_cli.chat_command(SETTINGS, stores, "someone/demo", input)
+    assert "SUPABASE_DB_URL" in capsys.readouterr().err
+
+
+def test_cli_index_without_a_database_points_to_the_web_app_not_cli_chat(
+    tmp_path, monkeypatch, capsys
+):
+    settings = SETTINGS.model_copy(update={"chat": CHAT.model_copy(update={"repos_dir": tmp_path})})
+    make_repo(tmp_path / "someone/demo", {"LICENSE": "MIT", ".git/setuppilot-clone-done": ""})
+    monkeypatch.setattr(chat_cli, "LocalEmbedder", lambda name, size: FakeEmbedder())
+    stores = replace(stores_with(InMemoryChunkIndex()), database_warning="No database.")
+    chat_cli.index_command(settings, stores, "https://github.com/someone/demo")
+    assert "web app's Chat page" in capsys.readouterr().out

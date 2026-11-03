@@ -8,10 +8,10 @@ from typing import Literal
 
 from setuppilot.chat.bot import ChatSession, RepoChatbot, search_chunks
 from setuppilot.chat.embed import Embedder
-from setuppilot.chat.repos import index_github_repo
+from setuppilot.chat.repos import index_github_repo, repo_key
 from setuppilot.config import GroqModel, Settings
 from setuppilot.db.stores import Stores
-from setuppilot.errors import BudgetExceeded, LLMUnavailable
+from setuppilot.errors import BudgetExceeded, LLMUnavailable, SetupPilotError
 from setuppilot.evaluation.chat_eval import (
     ChatCase,
     ChatScore,
@@ -23,16 +23,19 @@ from setuppilot.evaluation.chat_eval import (
 )
 from setuppilot.llm.client import LLMClient
 from setuppilot.llm.transport import Messages, Reply
-from setuppilot.tools.github_url import parse_github_url
 
 Mode = Literal["full", "retrieval", "replay"]
+
+
+class CacheMiss(SetupPilotError):
+    """Replay mode has no saved answer. Not LLMUnavailable, so no switch to SMALL is counted."""
 
 
 class CacheOnlyTransport:
     """Replay mode: every answer must already be in the cache, so a rerun costs nothing."""
 
     def send(self, model: GroqModel, messages: Messages, max_tokens: int, is_json: bool) -> Reply:
-        raise LLMUnavailable(
+        raise CacheMiss(
             "Replay mode: this answer is not in the cache.",
             details=f"{model.name} was not called. Run the evaluation in full mode first.",
         )
@@ -51,13 +54,18 @@ def run_chat_eval(
 ) -> list[ChatScore]:  # fmt: skip
     progress = results_dir / f"chat-{mode}.jsonl"
     done = {(s.repo_url, s.question) for s in load_done(progress)}
+    if done:
+        print(
+            f"Carrying on: {len(done)} questions were scored by an earlier run ({progress}). If "
+            "chat settings changed since, delete that file and re-index each repo first."
+        )
     for url in dict.fromkeys(c.repo_url for c in cases):
         _make_sure_indexed(settings, stores, url, embedder)
     bot = RepoChatbot(settings.chat, stores.chat_index, embedder, llm) if llm else None
     for case in cases:
         if (case.repo_url, case.question) in done:
             continue
-        key = _repo_key(case.repo_url)
+        key = repo_key(case.repo_url)
         if bot is None:
             (vector,) = embedder.embed([case.question])
             hits = search_chunks(stores.chat_index, settings.chat, key, vector)
@@ -65,7 +73,7 @@ def run_chat_eval(
         else:
             try:
                 score = score_answer(case, bot.ask(ChatSession(key), case.question))
-            except (LLMUnavailable, BudgetExceeded) as error:
+            except (LLMUnavailable, BudgetExceeded, CacheMiss) as error:
                 print(f"Stopped: {error.message} Run the same command later to carry on.")
                 break
         save_score(progress, score)
@@ -79,11 +87,6 @@ def run_chat_eval(
     return scores
 
 
-def _repo_key(url: str) -> str:
-    ref = parse_github_url(url)
-    return f"{ref.owner}/{ref.name}"
-
-
 def _make_sure_indexed(settings: Settings, stores: Stores, url: str, embedder: Embedder) -> None:
-    if _repo_key(url) not in stores.chat_index.repos():
+    if repo_key(url) not in stores.chat_index.repos():
         index_github_repo(settings, url, embedder, stores.chat_index)

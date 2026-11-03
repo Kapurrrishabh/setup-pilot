@@ -71,7 +71,9 @@ chat:
   embedding_dimensions: 384
   # Repos cloned just for the chatbot go here.
   repos_dir: workspace/chat-repos
-  # The model reads at most 256 tokens (about 1000 characters), so chunks stay below that.
+  # The model reads only the first 256 tokens. Measured on the eval repos (2026-11-03): 37 of 233
+  # chunks go past that at 800 (code-like files such as package.json), 2 of 313 at 550. Re-run
+  # eval-chat --mode retrieval before lowering it: the figures below were measured at 800.
   chunk_chars: 800
   chunk_overlap_chars: 100
   max_file_bytes: 200000
@@ -84,7 +86,8 @@ chat:
   max_chunks_per_file: 2
   min_similarity: 0.2
   answer_max_tokens: 700
-  # The last few turns go into each prompt; older ones are folded into a short summary
+  # Every turn not yet summarised goes into each prompt (up to twice this many; more while the
+  # summary fails, as it is retried each question). Older ones are folded into a short summary
   # (one small-model call every history_turns questions).
   history_turns: 4
 

@@ -52,6 +52,9 @@ def main(argv: list[str] | None = None) -> None:
     eval_setup.add_argument("--repos", type=Path, default=Path("eval/setup_repos.yaml"))
     eval_setup.add_argument("--workspace", type=Path, default=Path("workspace/eval"))
     eval_setup.add_argument("--results", type=Path, default=Path("eval/results"))
+    eval_setup.add_argument(
+        "--docker", action="store_true", help="Install inside a Docker container."
+    )
     args = parser.parse_args(argv)
 
     load_dotenv(Path(".env"))
@@ -72,7 +75,9 @@ def main(argv: list[str] | None = None) -> None:
             stores = open_stores(settings)
             cases = load_setup_cases(args.repos)
             agent = make_agent(settings, stores)
-            run_setup.run_setup_eval(stores, agent, cases, args.workspace, args.results)
+            run_setup.run_setup_eval(
+                stores, agent, cases, args.workspace, args.results, args.docker
+            )
         elif args.command == "web":
             serve(settings)
         else:

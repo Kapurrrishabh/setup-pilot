@@ -19,17 +19,26 @@ def index_command(settings: Settings, stores: Stores, url: str) -> None:
         if result.dropped
         else ""
     )
-    print(f"Indexed {key}: {result.chunks} chunks{cut}. Ask about it with: setuppilot chat {key}")
+    hint = (
+        "Without a database this index is gone when this command ends, so index and ask about "
+        "it in the web app's Chat page instead (setuppilot web)."
+        if stores.database_warning
+        else f"Ask about it with: setuppilot chat {key}"
+    )
+    print(f"Indexed {key}: {result.chunks} chunks{cut}. {hint}")
 
 
 def chat_command(
     settings: Settings, stores: Stores, repo_key: str, ask: Callable[[str], str]
 ) -> None:
     if repo_key not in stores.chat_index.repos():
-        print(
-            f"{repo_key} is not indexed yet. Run: setuppilot index <its GitHub URL>",
-            file=sys.stderr,
+        how = (
+            "Without a database, an index made by setuppilot index is gone when that command "
+            "ends. Set SUPABASE_DB_URL in .env, or use the web app's Chat page (setuppilot web)."
+            if stores.database_warning
+            else "Run: setuppilot index <its GitHub URL>"
         )
+        print(f"{repo_key} is not indexed yet. {how}", file=sys.stderr)
         raise SystemExit(1)
     llm = build_llm_client(settings, stores.usage, stores.cache, stores.metrics)
     embedder = LocalEmbedder(settings.chat.embedding_model, settings.chat.embedding_dimensions)

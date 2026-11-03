@@ -24,10 +24,16 @@ OUT_OF_SCOPE = (
     "how to set it up and run it, its license and how to contribute. It does not write or fix "
     "code; a coding assistant is the right tool for that."
 )
-# Asking to write or change code is out of scope. Plain rules: they cost no tokens.
+# Asking to write or change code is out of scope. Plain rules: they cost no tokens. Only a
+# request at the start counts ("hi, fix my code"), not a question ("does it generate code?").
+# "Error" is left out so "fix this error when I run npm install" stays a setup question.
+_CODE = r"(code|functions?|methods?|class(es)?|scripts?|programs?|snippets?|tests?|bugs?)\b"
 _CODING_HELP = re.compile(
-    r"\b(write|fix|debug|refactor|implement|rewrite|optimi[sz]e|generate)\s+(me\s+)?"
-    r"(a|an|my|this|some|the)\s+(\w+\s+)?(code|function|method|class|script|program|snippet)\b",
+    r"^((hi|hey|hello)[,!.]?\s+)?(please\s+)?(i\s+(need|want)\s+you\s+to\s+)?"
+    r"((can|could|would|will)\s+you\s+)?(please\s+)?(help\s+me\s+)?("
+    rf"(refactor|debug|implement|rewrite|optimi[sz]e)\s+((me|my|this|the|a|an|that|it)\b|{_CODE})"
+    rf"|(write|fix|generate)\s+(me\s+)?((a|an|my|this|some|the|that)\s+)?(\w+\s+)?{_CODE}"
+    rf"|give\s+me\s+((a|an|some)\s+(\w+\s+)?)?{_CODE})",
     re.IGNORECASE,
 )
 MAX_QUESTION_CHARS = 1000
@@ -60,6 +66,10 @@ class ChatSession:
     repo_key: str
     turns: list[tuple[str, str]] = field(default_factory=list)
     summary: str = ""
+
+
+class AnswerCutOff(SetupPilotError):
+    """The model used all of chat.answer_max_tokens before it finished its answer."""
 
 
 @dataclass(frozen=True)
@@ -129,13 +139,16 @@ class RepoChatbot:
             is_json=True,
             run_id=None,
         )
+        # Otherwise a cut-off reply would read as "I could not find this in the repo".
+        if result.is_truncated:
+            raise AnswerCutOff(
+                "The AI's answer was cut off before it finished.",
+                details=f"It used all of chat.answer_max_tokens ({self._config.answer_max_tokens})"
+                " in config.yaml. Raise it and ask again.",
+            )
         answer = _parse(result.text, {hit.chunk.path for hit in hits})
         answer = ChatAnswer(*answer, tokens=result.input_tokens + result.output_tokens)
         return self._remember(session, question, answer)
-
-    def _recent_turns(self, session: ChatSession) -> list[tuple[str, str]]:
-        keep = self._config.history_turns
-        return session.turns[-keep:] if keep else []
 
     def _messages(self, session: ChatSession, question: str, hits: list[Hit]) -> Messages:
         sources = "\n".join(
@@ -143,7 +156,7 @@ class RepoChatbot:
             f"<<<\n{hit.chunk.text}\n>>>"
             for n, hit in enumerate(hits, start=1)
         )
-        history = "\n".join(f"Q: {q}\nA: {a}" for q, a in self._recent_turns(session))
+        history = "\n".join(f"Q: {q}\nA: {a}" for q, a in session.turns)
         earlier = f"Earlier in this chat: {session.summary}\n" if session.summary else ""
         user = f"{earlier}{history}\n\nSources:\n{sources}\n\nQuestion: {question}"
         return [{"role": "system", "content": CHAT_SYSTEM}, {"role": "user", "content": user}]
@@ -158,8 +171,7 @@ class RepoChatbot:
             return answer
         if len(session.turns) < 2 * keep:
             return answer
-        old, session.turns = session.turns[:-keep], session.turns[-keep:]
-        text = "\n".join(f"Q: {q}\nA: {a}" for q, a in old)
+        text = "\n".join(f"Q: {q}\nA: {a}" for q, a in session.turns[:-keep])
         try:
             result = self._llm.complete(
                 [
@@ -172,10 +184,15 @@ class RepoChatbot:
                 run_id=None,
             )
         except SetupPilotError as error:
-            log.warning("chat summary skipped; old turns dropped", extra={"reason": error.message})
+            log.warning("chat summary failed; turns kept", extra={"reason": error.message})
             return answer
+        answer = replace(answer, tokens=answer.tokens + result.input_tokens + result.output_tokens)
+        if result.is_truncated or not result.text.strip():
+            log.warning("chat summary cut off or empty; turns kept")
+            return answer
+        session.turns = session.turns[-keep:]
         session.summary = result.text.strip()
-        return replace(answer, tokens=answer.tokens + result.input_tokens + result.output_tokens)
+        return answer
 
 
 def _parse(text: str, retrieved: set[str]) -> tuple[str, list[str], bool, bool]:
@@ -183,7 +200,11 @@ def _parse(text: str, retrieved: set[str]) -> tuple[str, list[str], bool, bool]:
     try:
         data = json.loads(text)
         answer, is_found = str(data["answer"]).strip(), data.get("found") is True
-        cited = [str(s) for s in data.get("sources", [])]
+        # The model may copy the "[n] path > section" label it was shown; keep only the path.
+        cited = [
+            re.sub(r"^\[\d+\]\s*", "", str(s)).split(" > ")[0].strip()
+            for s in data.get("sources", [])
+        ]
     except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
         return NOT_FOUND, [], True, False
     sources = [s for s in dict.fromkeys(cited) if s in retrieved]

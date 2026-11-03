@@ -17,7 +17,12 @@ from setuppilot.evaluation.chat_eval import (
     score_answer,
     score_retrieval,
 )
-from setuppilot.evaluation.run_chat import CacheOnlyTransport, run_chat_eval
+from setuppilot.evaluation.run_chat import (
+    CacheMiss,
+    CacheOnlyTransport,
+    replay_client,
+    run_chat_eval,
+)
 from setuppilot.llm.cache import InMemoryCache
 from setuppilot.llm.usage import InMemoryUsageStore
 from tests.fakes import FakeEmbedder, FakeTransport, groq_config, make_client, make_repo, reply
@@ -108,8 +113,31 @@ def test_stopped_run_carries_on_where_it_left_off(tmp_path, stores):
 
 
 def test_replay_mode_never_calls_groq():
-    with pytest.raises(LLMUnavailable, match="not in the cache"):
+    with pytest.raises(CacheMiss, match="not in the cache"):
         CacheOnlyTransport().send(groq_config().big, [], 10, True)
+
+
+def test_replay_cache_miss_is_not_counted_as_a_switch_to_the_small_model(tmp_path, stores):
+    llm = replay_client(SETTINGS, stores)
+    run_chat_eval(SETTINGS, stores, [LICENSE_CASE], "replay", tmp_path, FakeEmbedder(), llm)
+    assert stores.metrics.count("small_model_fallback") == 0
+
+
+def test_rerun_says_its_scores_come_from_an_earlier_run(tmp_path, stores, capsys):
+    for _ in range(2):
+        run_chat_eval(SETTINGS, stores, [LICENSE_CASE], "retrieval", tmp_path, FakeEmbedder(), None)
+    assert "scored by an earlier run" in capsys.readouterr().out
+
+
+def test_eval_searches_a_repo_it_had_to_index_itself(tmp_path):
+    chat = SETTINGS.chat.model_copy(update={"repos_dir": tmp_path / "repos"})
+    clone = {"LICENSE": "MIT License text", ".git/setuppilot-clone-done": ""}
+    make_repo(tmp_path / "repos/someone/demo", clone)
+    scores = run_chat_eval(
+        SETTINGS.model_copy(update={"chat": chat}), stores_with(InMemoryChunkIndex()),
+        [LICENSE_CASE], "retrieval", tmp_path / "out", FakeEmbedder(), None,
+    )  # fmt: skip
+    assert scores[0].is_grounded
 
 
 def test_facts_must_be_whole_words():
@@ -117,6 +145,16 @@ def test_facts_must_be_whole_words():
     wrong = score_answer(case, ChatAnswer("Use is permitted freely.", ["LICENSE"], True, True, 1))
     right = score_answer(case, ChatAnswer("It is MIT.", ["LICENSE"], True, True, 1))
     assert (wrong.is_correct, right.is_correct) == (False, True)
+
+
+@pytest.mark.parametrize(
+    ("facts", "text"),
+    [(("integer", "string"), "It converts integer primitives to decimal strings."),
+     (("sign",), "Data is cryptographically signed, so it cannot be changed.")],
+)  # fmt: skip
+def test_facts_match_the_plain_word_endings_the_readmes_use(facts, text):
+    case = ChatCase(URL, "What does it do?", True, facts, "README.md")
+    assert score_answer(case, ChatAnswer(text, ["README.md"], True, True, 1)).is_correct
 
 
 def test_version_facts_do_not_match_longer_versions():

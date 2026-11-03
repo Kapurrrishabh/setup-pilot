@@ -28,7 +28,13 @@ def chat_repo_folder(settings: Settings, url: str) -> tuple[str, str, Path]:
         owner_dir.mkdir(parents=True, exist_ok=True)
         clone_repo(ref, owner_dir, settings.repo, check_github_repo)
         (folder / _DONE_MARKER).touch()
-    return f"{ref.owner}/{ref.name}", ref.url, folder
+    return repo_key(url), ref.url, folder
+
+
+def repo_key(url: str) -> str:
+    """The name the chat index keeps a repo under."""
+    ref = parse_github_url(url)
+    return f"{ref.owner}/{ref.name}"
 
 
 def index_github_repo(

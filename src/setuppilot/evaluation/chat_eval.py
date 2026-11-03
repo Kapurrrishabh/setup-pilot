@@ -60,8 +60,10 @@ def score_answer(case: ChatCase, answer: ChatAnswer) -> ChatScore:
 
 
 def _has_phrase(text: str, fact: str) -> bool:
-    """Whole words only, so the fact "mit" does not match "permitted"."""
-    return re.search(rf"(?<![\w.]){re.escape(fact)}(?!\w|\.\w)", text.lower()) is not None
+    """Whole words, plus a plain ending ("signed" for "sign"), so "mit" never matches
+    "permitted"."""
+    pattern = rf"(?<![\w.]){re.escape(fact)}(?:s|es|ed|ing)?(?!\w|\.\w)"
+    return re.search(pattern, text.lower()) is not None
 
 
 def score_retrieval(case: ChatCase, hits: list[Hit], min_similarity: float) -> ChatScore:

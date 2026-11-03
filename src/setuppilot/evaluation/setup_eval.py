@@ -22,7 +22,6 @@ class SetupCase:
     expected_stack: str
     expected_manager: str
     expected_install: tuple[str, ...]
-    expected_result: str
 
 
 @dataclass(frozen=True)
@@ -40,13 +39,18 @@ class SetupScore:
 
 def load_setup_cases(path: Path) -> list[SetupCase]:
     data = yaml.safe_load(path.read_text())
+    # The table counts every result but "verified" as a miss, so it cannot score other guesses.
+    if others := [r["url"] for r in data["repos"] if r["expected_result"] != "verified"]:
+        raise ValueError(
+            f"expected_result must be 'verified' for {others}, because the table counts any other "
+            f"result as a miss. Set it to verified or remove the repo from {path}."
+        )
     return [
         SetupCase(
             r["url"],
             r["expected_stack"],
             r["expected_manager"],
             tuple(r["expected_install"]),
-            r["expected_result"],
         )  # fmt: skip
         for r in data["repos"]
     ]
@@ -65,10 +69,10 @@ def auto_answer(case: SetupCase, question: dict) -> dict:
 
 def run_setup_case(
     case: SetupCase, agent: SetupAgent, runs: RunStore, usage: UsageStore, dest: Path,
-    clock: Callable[[], float] = time.monotonic,
+    use_docker: bool, clock: Callable[[], float] = time.monotonic,
 ) -> SetupScore:  # fmt: skip
     started = clock()
-    outcome: Waiting | Finished = agent.start(case.url, str(dest), use_docker=False)
+    outcome: Waiting | Finished = agent.start(case.url, str(dest), use_docker=use_docker)
     approvals, installs = 0, []
     while isinstance(outcome, Waiting):
         reply = auto_answer(case, outcome.question)
