@@ -1,4 +1,4 @@
-"""Start, answer and resume setup runs. The CLI and (later) the web app both use this."""
+"""Start, answer and resume setup runs. The CLI and the web app both use this."""
 
 from dataclasses import dataclass
 from typing import Any

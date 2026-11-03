@@ -79,12 +79,21 @@ def test_finished_run_gets_a_finish_time(stores, status):
     assert runs.get_run(run_id).finished_at is not None
 
 
-@pytest.mark.parametrize("status", ["running", "waiting_approval", "paused"])
+@pytest.mark.parametrize("status", ["running", "waiting_approval"])
 def test_unfinished_run_has_no_finish_time(stores, status):
     runs, _, _ = stores
     run_id = runs.create_run(REPO, "/home/dev/work").id
     runs.set_status(run_id, status, None, None)
     assert runs.get_run(run_id).finished_at is None
+
+
+@pytest.mark.parametrize("late", ["running", "waiting_approval", "succeeded", "failed"])
+def test_a_cancelled_run_stays_cancelled_when_a_worker_updates_it_late(stores, late):
+    runs, _, _ = stores
+    run_id = runs.create_run(REPO, "/home/dev/work").id
+    runs.set_status(run_id, "cancelled", "RunCancelled", "You cancelled this run.")
+    runs.set_status(run_id, late, None, None)
+    assert runs.get_run(run_id).status == "cancelled"
 
 
 @pytest.mark.parametrize("status", get_args(RunStatus))

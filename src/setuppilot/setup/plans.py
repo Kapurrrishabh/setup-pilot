@@ -237,7 +237,7 @@ def _services_running(output: CommandOutput, expected: tuple[str, ...]) -> Check
     lines = [x for x in output.output_tail.splitlines() if x.lstrip().startswith(("{", "["))]
     try:
         rows = [row for line in lines for row in _json_rows(line)]
-    except json.JSONDecodeError:
+    except ValueError:  # bad JSON, or a number too long for Python to read
         return Check(name, False, f"Could not read `docker compose ps`: {lines[:3]}")
     # A one-shot job (migrate, init) ends with exit 0. That is safe to accept: `up --wait`
     # already fails when a service that should keep running exits.

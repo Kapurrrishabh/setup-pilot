@@ -78,9 +78,13 @@ class InMemoryRunStore:
     def set_status(
         self, run_id: str, status: RunStatus, error_type: str | None, message: str | None
     ) -> None:
+        run = self.get_run(run_id)
+        # A finished run stays finished, so a late worker update cannot undo a Cancel.
+        if run.status in FINISHED_STATUSES:
+            return
         finished_at = datetime.now(UTC) if status in FINISHED_STATUSES else None
         self._runs[run_id] = replace(
-            self.get_run(run_id),
+            run,
             status=status,
             error_type=error_type,
             message=message,

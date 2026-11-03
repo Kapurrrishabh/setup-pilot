@@ -230,14 +230,23 @@ class PostgresRunStore:
     def set_status(
         self, run_id: str, status: RunStatus, error_type: str | None, message: str | None
     ) -> None:
+        # One statement, so a late worker update cannot undo a Cancel that lands at the same time.
         with _connection(self._pool) as conn:
             updated = conn.execute(
                 "update runs set status = %s, error_type = %s, message = %s, "
-                "finished_at = case when %s then now() end where id = %s",
-                (status, error_type, message, status in FINISHED_STATUSES, _run_uuid(run_id)),
+                "finished_at = case when %s then now() end "
+                "where id = %s and status <> all(%s)",
+                (
+                    status,
+                    error_type,
+                    message,
+                    status in FINISHED_STATUSES,
+                    _run_uuid(run_id),
+                    list(FINISHED_STATUSES),
+                ),
             ).rowcount
         if updated == 0:
-            raise no_such_run(run_id)
+            self.get_run(run_id)  # raises when there is no such run; otherwise it was finished
 
     def delete_run(self, run_id: str) -> None:
         with _connection(self._pool) as conn:

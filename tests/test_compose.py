@@ -17,6 +17,15 @@ def compose_files(tmp_path, files):
     return find_compose_files(scan.root, scan.files)
 
 
+def test_a_long_service_name_with_many_mounts_gives_a_short_warning_list(tmp_path):
+    mounts = "".join(f"      - /host{i}:/c{i}\n" for i in range(500))
+    # 1000 characters: YAML refuses longer names unless they use the explicit `? key` form.
+    compose = f"services:\n  {'x' * 1000}:\n    image: y\n    volumes:\n{mounts}"
+    (found,) = compose_files(tmp_path, {"compose.yaml": compose})
+    assert len(found.warnings) == 21 and found.warnings[-1] == "...and 480 more."
+    assert max(len(w) for w in found.warnings) < 300
+
+
 def test_compose_file_lists_its_services(tmp_path):
     (found,) = compose_files(tmp_path, {"docker-compose.yml": WEB})
     assert (found.path, found.services, found.warnings) == ("docker-compose.yml", ("web", "db"), ())

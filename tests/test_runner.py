@@ -126,6 +126,15 @@ def test_missing_program_is_a_prerequisite_error(tmp_path):
         run_command(command, CONFIG, on_start=no_op)
 
 
+def test_a_secret_typed_into_a_command_is_hidden_in_its_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_typedintoanedit123456")
+    text = "no-such-tool-xyz install gsk_typedintoanedit123456"
+    command = SafeCommand(tuple(text.split()), tmp_path, text)
+    with pytest.raises(PrereqMissing) as raised:
+        run_command(command, CONFIG, on_start=no_op)
+    assert "gsk_typedintoanedit123456" not in raised.value.details
+
+
 def test_child_env_turns_off_prompts():
     env = child_env()
     assert (env["GIT_TERMINAL_PROMPT"], env["PIP_NO_INPUT"]) == ("0", "1")

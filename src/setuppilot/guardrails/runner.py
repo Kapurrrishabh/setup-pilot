@@ -77,7 +77,7 @@ def run_command(
         reader.join(timeout=_READER_JOIN_SECONDS)
         raise CommandTimeout(
             f"The command ran longer than {config.timeout_seconds:.0f} seconds and was stopped.",
-            details=f"{command.text!r}. Raise runner.timeout_seconds in config.yaml if it "
+            details=f"{redact(command.text)!r}. Raise runner.timeout_seconds in config.yaml if it "
             f"needs longer. Last output:\n{tail.text()}",
         ) from error
     finally:
@@ -87,8 +87,9 @@ def run_command(
     if reader.is_alive():
         raise InstallFailed(
             "A background process started by this command is still running.",
-            details=f"{command.text!r} left a process that escaped the time limit and keeps its "
-            f"output open. Stop it yourself, or use Docker mode. Output so far:\n{tail.text()}",
+            details=f"{redact(command.text)!r} left a process that escaped the time limit and "
+            "keeps its output open. Stop it yourself, or use Docker mode. Output so far:\n"
+            f"{tail.text()}",
         )
     text = tail.text()
     return CommandOutput(
@@ -122,7 +123,7 @@ def _start(command: SafeCommand) -> subprocess.Popen:
             ) from error
         raise PrereqMissing(
             f"{command.argv[0]} is not installed or not on PATH.",
-            details=f"Could not start {command.text!r}: {error.strerror}.",
+            details=f"Could not start {redact(command.text)!r}: {error.strerror}.",
         ) from error
 
 

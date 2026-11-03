@@ -358,7 +358,7 @@ def _readme_tips(
             for t in data.get("extra_commands", [])[:_MAX_TIPS]
         ]
         manual = [str(m)[:200] for m in data.get("manual_steps", [])[:_MAX_MANUAL_STEPS]]
-    except (json.JSONDecodeError, AttributeError, TypeError, KeyError):
+    except (ValueError, AttributeError, TypeError, KeyError):
         return [], [], note, "README tips skipped: the AI's answer could not be read."
     return tips, manual, note, None
 

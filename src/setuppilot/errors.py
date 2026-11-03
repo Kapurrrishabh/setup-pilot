@@ -57,7 +57,8 @@ class TooManySteps(SetupPilotError):
 
 
 class LLMUnavailable(SetupPilotError):
-    """Groq could not answer: a limit was reached, the key is missing, or the service is down."""
+    """Groq could not answer: a limit was reached, the key is missing, the service is down, or
+    the model could not give a valid JSON answer."""
 
 
 class LLMRequestRejected(SetupPilotError):
