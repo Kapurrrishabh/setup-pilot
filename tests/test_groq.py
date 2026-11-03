@@ -65,6 +65,14 @@ def test_reply_has_text_and_real_token_counts():
     )
 
 
+def test_reply_without_token_counts_is_a_service_error_not_a_crash():
+    body = completion() | {"usage": None}
+    with pytest.raises(ServiceDown, match="no token counts"):
+        transport_for(lambda r: httpx2.Response(200, json=body)).send(
+            PLAIN_MODEL, QUESTION, 50, False
+        )
+
+
 def test_request_sends_model_settings_and_hides_reasoning_text():
     sent = []
 

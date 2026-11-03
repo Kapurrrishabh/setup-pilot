@@ -12,7 +12,7 @@ import psycopg
 from langgraph.checkpoint.postgres import PostgresSaver
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict
-from psycopg.rows import dict_row
+from psycopg.rows import DictRow, dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool, PoolTimeout
 
@@ -30,9 +30,11 @@ from setuppilot.redact import redact
 _MIGRATION_LOCK_ID = 20261101
 # Its own lock: a migration waiting on it would block LangGraph's concurrent index build.
 _CHECKPOINT_LOCK_ID = 20261102
+# Every pool here sets row_factory=dict_row, so its rows are dicts, not tuples.
+Pool = ConnectionPool[psycopg.Connection[DictRow]]
 
 
-def open_pool(url: str, config: DatabaseConfig) -> ConnectionPool:
+def open_pool(url: str, config: DatabaseConfig) -> Pool:
     timeout = int(config.connect_timeout_seconds)
     try:
         conninfo_to_dict(url)
@@ -55,7 +57,7 @@ def open_pool(url: str, config: DatabaseConfig) -> ConnectionPool:
             details=f"{redact(str(error)).strip()} Check SUPABASE_DB_URL in .env: the password, "
             "and on an IPv4 network the Session pooler string.",
         ) from error
-    pool = ConnectionPool(
+    pool: Pool = ConnectionPool(
         url,
         min_size=1,
         max_size=config.pool_max_size,
@@ -79,7 +81,7 @@ def open_checkpointer(url: str, config: DatabaseConfig) -> PostgresSaver:
     """LangGraph's saved run state, so a waiting approval survives an app restart."""
     timeout = int(config.connect_timeout_seconds)
     # LangGraph's own setup needs autocommit (it creates indexes concurrently).
-    pool = ConnectionPool(
+    pool: Pool = ConnectionPool(
         url,
         min_size=1,
         max_size=config.pool_max_size,
@@ -102,7 +104,10 @@ def open_checkpointer(url: str, config: DatabaseConfig) -> PostgresSaver:
             # CONCURRENTLY forever. Setup runs on this connection, so a pool of one is enough.
             deadline = monotonic() + config.connect_timeout_seconds
             try_lock = "select pg_try_advisory_lock(%s) as is_locked"
-            while not conn.execute(try_lock, (_CHECKPOINT_LOCK_ID,)).fetchone()["is_locked"]:
+            while True:
+                row = conn.execute(try_lock, (_CHECKPOINT_LOCK_ID,)).fetchone()
+                if row is not None and row["is_locked"]:
+                    break
                 if monotonic() > deadline:
                     raise TimeoutError(
                         f"Another SetupPilot start held database lock {_CHECKPOINT_LOCK_ID} "
@@ -129,7 +134,7 @@ def open_checkpointer(url: str, config: DatabaseConfig) -> PostgresSaver:
 
 
 @contextmanager
-def _connection(pool: ConnectionPool) -> Iterator[psycopg.Connection]:
+def _connection(pool: Pool) -> Iterator[psycopg.Connection[DictRow]]:
     try:
         with pool.connection() as conn:
             yield conn
@@ -163,7 +168,7 @@ def _unknown_run_is_lookup_error(run_id: str | None) -> Iterator[None]:
         raise no_such_run(str(run_id)) from None
 
 
-def migrate(pool: ConnectionPool) -> list[str]:
+def migrate(pool: Pool) -> list[str]:
     """Run each migrations/*.sql file once, in name order. Returns the files it ran."""
     files = sorted(
         resources.files("setuppilot.db").joinpath("migrations").iterdir(), key=lambda f: f.name
@@ -201,16 +206,16 @@ def _run_from_row(row: dict) -> Run:
 
 
 class PostgresRunStore:
-    def __init__(self, pool: ConnectionPool) -> None:
+    def __init__(self, pool: Pool) -> None:
         self._pool = pool
 
     def create_run(self, repo_url: str, dest_dir: str) -> Run:
         with _connection(self._pool) as conn:
-            row = conn.execute(
+            (row,) = conn.execute(
                 "insert into runs (repo_url, dest_dir, status) values (%s, %s, 'running') "
                 "returning *",
                 (repo_url, dest_dir),
-            ).fetchone()
+            ).fetchall()
         return _run_from_row(row)
 
     def get_run(self, run_id: str) -> Run:
@@ -297,7 +302,7 @@ class PostgresRunStore:
 
 
 class PostgresUsageStore:
-    def __init__(self, pool: ConnectionPool) -> None:
+    def __init__(self, pool: Pool) -> None:
         self._pool = pool
 
     def add(self, usage: Usage) -> None:
@@ -319,11 +324,11 @@ class PostgresUsageStore:
 
     def tokens_for_run(self, run_id: str) -> int:
         with _connection(self._pool) as conn:
-            row = conn.execute(
+            (row,) = conn.execute(
                 "select coalesce(sum(input_tokens + output_tokens), 0) as total "
                 "from token_usage where run_id = %s",
                 (_run_uuid(run_id),),
-            ).fetchone()
+            ).fetchall()
         return row["total"]
 
     def tokens_for_runs(self, run_ids: list[str]) -> dict[str, int]:
@@ -340,11 +345,11 @@ class PostgresUsageStore:
 
     def tokens_on_day(self, day: date) -> int:
         with _connection(self._pool) as conn:
-            row = conn.execute(
+            (row,) = conn.execute(
                 "select coalesce(sum(input_tokens + output_tokens), 0) as total "
                 "from token_usage where created_at >= %s and created_at < %s",
                 _day_range(day),
-            ).fetchone()
+            ).fetchall()
         return row["total"]
 
     def calls_on_day_by_model(self, day: date) -> dict[str, int]:
@@ -363,7 +368,7 @@ def _day_range(day: date) -> tuple[datetime, datetime]:
 
 
 class PostgresCache:
-    def __init__(self, pool: ConnectionPool) -> None:
+    def __init__(self, pool: Pool) -> None:
         self._pool = pool
 
     def get(self, key: str) -> Reply | None:
@@ -385,7 +390,7 @@ class PostgresCache:
 
 
 class PostgresMetricsStore:
-    def __init__(self, pool: ConnectionPool) -> None:
+    def __init__(self, pool: Pool) -> None:
         self._pool = pool
 
     def add(self, name: MetricName, run_id: str | None) -> None:
@@ -397,9 +402,9 @@ class PostgresMetricsStore:
 
     def count(self, name: MetricName) -> int:
         with _connection(self._pool) as conn:
-            row = conn.execute(
+            (row,) = conn.execute(
                 "select count(*) as n from metrics where name = %s", (name,)
-            ).fetchone()
+            ).fetchall()
         return row["n"]
 
 
@@ -408,7 +413,7 @@ def _vector_text(vector: list[float]) -> str:
 
 
 class PostgresChunkIndex:
-    def __init__(self, pool: ConnectionPool) -> None:
+    def __init__(self, pool: Pool) -> None:
         self._pool = pool
 
     def replace_repo(

@@ -40,7 +40,7 @@ class GroqTransport:
         try:
             response = self._client.chat.completions.create(
                 model=model.name,
-                messages=messages,
+                messages=messages,  # type: ignore[arg-type]  # plain role/content dicts
                 max_completion_tokens=max_tokens,
                 temperature=0,
                 **options,
@@ -67,11 +67,13 @@ class GroqTransport:
                 _REJECTED_MESSAGES.get(error.status_code, "Groq refused the request."),
                 details=details,
             ) from error
-        choice = response.choices[0]
+        choice, usage = response.choices[0], response.usage
+        if usage is None:
+            raise ServiceDown(f"{model.name}: the reply had no token counts.")
         return Reply(
             text=choice.message.content or "",
-            input_tokens=response.usage.prompt_tokens,
-            output_tokens=response.usage.completion_tokens,
+            input_tokens=usage.prompt_tokens,
+            output_tokens=usage.completion_tokens,
             is_truncated=choice.finish_reason == "length",
         )
 

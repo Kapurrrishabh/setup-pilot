@@ -1,5 +1,7 @@
 """Build everything the web app needs, and start it on this machine only."""
 
+from functools import partial
+
 from setuppilot.agent.wiring import build_agent
 from setuppilot.chat.bot import RepoChatbot
 from setuppilot.chat.embed import LocalEmbedder
@@ -24,16 +26,14 @@ def build_services(settings: Settings) -> WebServices:
     agent = build_agent(settings, stores, llm, on_start=tracker.track)
     runs = RunManager(agent, stores.runs, tracker)
     embedder = LocalEmbedder(settings.chat.embedding_model, settings.chat.embedding_dimensions)
-
-    def make_chatbot() -> RepoChatbot:
-        return RepoChatbot(settings.chat, stores.chat_index, embedder, llm)
-
     return WebServices(
         settings=settings,
         stores=stores,
         runs=runs,
         embedder=embedder,
-        make_chatbot=make_chatbot if llm else None,
+        make_chatbot=(
+            partial(RepoChatbot, settings.chat, stores.chat_index, embedder, llm) if llm else None
+        ),
         llm_problem=llm_problem,
         preflight=lambda folder: run_preflight(stores, SystemToolProbe(), folder),
     )

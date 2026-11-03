@@ -15,6 +15,8 @@ class _Strict(BaseModel):
 class LoggingConfig(_Strict):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"]
     file: Path
+    max_file_mb: PositiveInt
+    backup_count: PositiveInt
 
 
 class ModelLimits(_Strict):

@@ -29,7 +29,8 @@ def _sections(document: Document) -> list[tuple[str, str]]:
     """Markdown files are split at their headings; other files are one section."""
     if not document.path.lower().endswith(".md"):
         return [("", document.text)]
-    sections, title, lines = [], "", []
+    sections, title = [], ""
+    lines: list[str] = []
     in_code = False
     for line in document.text.splitlines():
         if line.lstrip().startswith(("```", "~~~")):

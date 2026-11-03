@@ -146,8 +146,8 @@ class RepoChatbot:
                 details=f"It used all of chat.answer_max_tokens ({self._config.answer_max_tokens})"
                 " in config.yaml. Raise it and ask again.",
             )
-        answer = _parse(result.text, {hit.chunk.path for hit in hits})
-        answer = ChatAnswer(*answer, tokens=result.input_tokens + result.output_tokens)
+        parsed = _parse(result.text, {hit.chunk.path for hit in hits})
+        answer = ChatAnswer(*parsed, tokens=result.input_tokens + result.output_tokens)
         return self._remember(session, question, answer)
 
     def _messages(self, session: ChatSession, question: str, hits: list[Hit]) -> Messages:

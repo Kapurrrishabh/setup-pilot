@@ -2,6 +2,7 @@
 
 import json
 import logging
+import logging.handlers
 import sys
 import traceback
 from contextvars import ContextVar
@@ -14,6 +15,12 @@ APP_LOGGER = "setuppilot"
 run_id_var: ContextVar[str | None] = ContextVar("run_id", default=None)
 
 _RECORD_FIELDS = set(vars(logging.makeLogRecord({}))) | {"message", "asctime"}
+
+
+class _RedactingFileHandler(logging.handlers.RotatingFileHandler):
+    def handleError(self, record: logging.LogRecord) -> None:
+        # The stock handleError prints the record's raw arguments, which skips redact().
+        sys.stderr.write(redact(traceback.format_exc()))
 
 
 class JsonFormatter(logging.Formatter):
@@ -40,10 +47,13 @@ def setup_logging(config: LoggingConfig) -> None:
     for old in [h for h in root.handlers if isinstance(h.formatter, JsonFormatter)]:
         root.removeHandler(old)
         old.close()
-    handler = logging.FileHandler(config.file, encoding="utf-8")
+    handler = _RedactingFileHandler(
+        config.file,
+        maxBytes=config.max_file_mb * 1_000_000,
+        backupCount=config.backup_count,
+        encoding="utf-8",
+    )
     handler.setFormatter(JsonFormatter())
-    # The stock handleError prints the record's raw arguments, which skips redact().
-    handler.handleError = lambda record: sys.stderr.write(redact(traceback.format_exc()))
     root.addHandler(handler)
     root.setLevel(logging.WARNING)
     logging.getLogger(APP_LOGGER).setLevel(config.level)

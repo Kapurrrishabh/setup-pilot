@@ -14,7 +14,7 @@ from langgraph.types import interrupt
 
 from setuppilot.agent.prompts import readme_tips_messages, report_messages
 from setuppilot.config import Settings
-from setuppilot.db.runs import RunStore, Step
+from setuppilot.db.runs import RunStatus, RunStore, Step
 from setuppilot.errors import (
     CommandBlocked,
     InstallFailed,
@@ -141,7 +141,8 @@ def build_graph(deps: AgentDeps) -> StateGraph:
     return graph
 
 
-def _recorded(name: str, deps: AgentDeps, fn: NodeFn) -> Callable[[RunState], dict]:
+# Not Callable[[RunState], dict]: LangGraph's node type needs the argument to be named `state`.
+def _recorded(name: str, deps: AgentDeps, fn: NodeFn) -> Callable[..., dict]:
     """Run a node, count it, turn known errors into state, and save the step to the timeline."""
 
     def node(state: RunState) -> dict:
@@ -158,8 +159,7 @@ def _recorded(name: str, deps: AgentDeps, fn: NodeFn) -> Callable[[RunState], di
             update, note = fn(state)
         except SetupPilotError as error:
             update, note = {"error": _error(error)}, StepNote(error.message)
-        error = update.get("error")
-        _save_step(deps, state["run_id"], name, note, error, started)
+        _save_step(deps, state["run_id"], name, note, update.get("error"), started)
         return update | {"steps": steps + 1}
 
     return node
@@ -365,6 +365,8 @@ def _readme_tips(
 
 def _approve(state: RunState) -> tuple[dict, StepNote]:
     index = _pending_index(state)
+    if index is None:
+        raise RuntimeError(f"Run {state['run_id']} reached approve with no command waiting.")
     plan = [dict(p) for p in state["plan"]]
     item = plan[index]
     answer = interrupt(
@@ -381,7 +383,7 @@ def _approve(state: RunState) -> tuple[dict, StepNote]:
     )
     action = answer.get("action")
     if action == "approve":
-        update = {"decision": "approve", "edit_error": None, "next_index": index}
+        update: dict = {"decision": "approve", "edit_error": None, "next_index": index}
         return update, StepNote(f"Approved: {item['text']}")
     if action == "edit":
         new_text = str(answer.get("command", ""))
@@ -411,14 +413,14 @@ def _execute(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
         output = deps.run(command)
     except SetupPilotError as error:
         item["status"] = "failed"
-        update = {"plan": plan, "next_index": index + 1, "error": _error(error)}
+        update: dict = {"plan": plan, "next_index": index + 1, "error": _error(error)}
         return update, StepNote(f"{item['text']}: {error.message}", command.argv[0], arguments)
     item |= {
         "status": "done",
         "exit_code": output.exit_code,
         "output_tail": output.output_tail[-_STATE_OUTPUT_CHARS:],
     }
-    update: dict = {"plan": plan, "next_index": index + 1}
+    update = {"plan": plan, "next_index": index + 1}
     if output.exit_code != 0 and item["kind"] != "check":
         update["error"] = _error(
             InstallFailed(
@@ -534,7 +536,7 @@ def _report(deps: AgentDeps, state: RunState) -> dict:
             tokens, model = result.input_tokens + result.output_tokens, result.model
         except SetupPilotError as llm_error:
             report += f"\n(AI summary skipped: {llm_error.message})"
-    status = "cancelled" if is_cancelled else "succeeded" if is_verified else "failed"
+    status: RunStatus = "cancelled" if is_cancelled else "succeeded" if is_verified else "failed"
     deps.runs.set_status(
         state["run_id"],
         status,

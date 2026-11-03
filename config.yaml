@@ -3,6 +3,9 @@
 logging:
   level: INFO
   file: logs/setuppilot.jsonl
+  # PROVISIONAL: two days of heavy testing wrote 0.6 MB, so 10 MB x 3 old files is plenty.
+  max_file_mb: 10
+  backup_count: 3
 
 groq:
   base_url: https://api.groq.com/openai/v1

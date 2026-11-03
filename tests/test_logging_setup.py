@@ -10,7 +10,7 @@ from setuppilot.logging_setup import run_id_var, setup_logging
 @pytest.fixture
 def log_file(tmp_path):
     path = tmp_path / "logs" / "app.jsonl"
-    setup_logging(LoggingConfig(level="INFO", file=path))
+    setup_logging(LoggingConfig(level="INFO", file=path, max_file_mb=1, backup_count=1))
     return path
 
 

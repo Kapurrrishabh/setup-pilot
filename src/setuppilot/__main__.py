@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 
 from setuppilot import history
 from setuppilot.agent.cli import interact, make_agent, resolve_destination
+from setuppilot.agent.driver import Finished, Stopped, Waiting
 from setuppilot.chat import cli as chat_cli
 from setuppilot.chat.embed import LocalEmbedder
 from setuppilot.config import Settings, load_settings
@@ -116,6 +117,7 @@ def set_up_repo(settings: Settings, args: argparse.Namespace) -> bool:
     if stores.database_warning:
         print(stores.database_warning, file=sys.stderr)
     agent = make_agent(settings, stores)
+    outcome: Waiting | Stopped | Finished
     if args.command == "run":
         outcome = agent.start(args.repo_url, resolve_destination(args.dest), args.docker)
     else:

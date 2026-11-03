@@ -1,6 +1,9 @@
 """Turn text into vectors on this machine, with a small sentence-transformers model."""
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 
 class Embedder(Protocol):
@@ -14,7 +17,7 @@ class LocalEmbedder:
     def __init__(self, model_name: str, dimensions: int) -> None:
         self.dimensions = dimensions
         self._model_name = model_name
-        self._model = None
+        self._model: SentenceTransformer | None = None
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if self._model is None:

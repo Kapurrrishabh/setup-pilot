@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import Any
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command
 
@@ -115,7 +116,7 @@ class SetupAgent:
             return Waiting(run_id, question.id, question.value)
         return _finished(run_id, result)
 
-    def _config(self, run_id: str) -> dict:
+    def _config(self, run_id: str) -> RunnableConfig:
         return {"configurable": {"thread_id": run_id}, "recursion_limit": self._recursion_limit}
 
 

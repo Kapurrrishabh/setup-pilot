@@ -314,7 +314,7 @@ def test_step_log_lines_carry_the_run_id_and_every_step_field(tmp_path):
     from setuppilot.logging_setup import setup_logging
 
     log_file = tmp_path / "app.jsonl"
-    setup_logging(LoggingConfig(level="INFO", file=log_file))
+    setup_logging(LoggingConfig(level="INFO", file=log_file, max_file_mb=1, backup_count=1))
     agent, _ = make_agent(tmp_path, PIP_REPO)
     first = start(agent, tmp_path)
     lines = [json.loads(line) for line in log_file.read_text().splitlines()]
