@@ -64,7 +64,7 @@ NODE_MANAGERS = {"npm", "yarn", "pnpm", "bun"}
 _SHELL_PARTS = (";", "|", "&", "`", "$(", "\n", "\r", "\x00")
 # `python -c` may only import a module: that is the verify step's import test.
 _IMPORT_ONLY = re.compile(r"import [A-Za-z_]\w*(\.[A-Za-z_]\w*)*", re.ASCII)
-_MAX_COMMAND_CHARS = 1000
+MAX_COMMAND_CHARS = 1000
 
 
 @dataclass(frozen=True)
@@ -77,8 +77,8 @@ class SafeCommand:
 
 
 def validate_command(text: str, guard: PathGuard) -> SafeCommand:
-    if len(text) > _MAX_COMMAND_CHARS:
-        raise _blocked(text, f"It is longer than {_MAX_COMMAND_CHARS} characters.")
+    if len(text) > MAX_COMMAND_CHARS:
+        raise _blocked(text, f"It is longer than {MAX_COMMAND_CHARS} characters.")
     if any(part in text for part in _SHELL_PARTS):
         raise _blocked(text, "It chains commands or has hidden characters. Run one command.")
     try:

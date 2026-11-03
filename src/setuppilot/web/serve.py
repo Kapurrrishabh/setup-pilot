@@ -42,5 +42,8 @@ def build_services(settings: Settings) -> WebServices:
 def serve(settings: Settings) -> None:
     app = create_app(build_services(settings))
     web = settings.web
-    print(f"SetupPilot is running at http://{web.host}:{web.port} (only this machine can open it).")
+    print(
+        f"Starting SetupPilot at http://{web.host}:{web.port} (only this machine can open it). "
+        "If the port is busy, change web.port in config.yaml."
+    )
     app.run(host=web.host, port=web.port, threaded=True, debug=False, use_reloader=False)

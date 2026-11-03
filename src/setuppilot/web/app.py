@@ -19,7 +19,7 @@ from setuppilot.config import Settings
 from setuppilot.db.reports import HISTORY_LIMIT, metrics_summary, recent_runs
 from setuppilot.db.stores import Stores
 from setuppilot.errors import NotFound, SetupPilotError
-from setuppilot.guardrails.commands import INSTALL_SCRIPT_WARNING
+from setuppilot.guardrails.commands import INSTALL_SCRIPT_WARNING, MAX_COMMAND_CHARS
 from setuppilot.llm.groq import is_tracing_on
 from setuppilot.tools.github_url import parse_github_url
 from setuppilot.web.labels import PAGE_LABELS, STATUS_LABELS, duration_text, error_label, repo_name
@@ -28,7 +28,6 @@ from setuppilot.web.security import protect
 
 _EVENT_SECONDS = 1.0
 _PING_SECONDS = 15.0
-_MAX_COMMAND_CHARS = 1000
 
 
 @dataclass(frozen=True)
@@ -241,6 +240,6 @@ def _reply(body: dict[str, Any]) -> dict[str, Any]:
     if action == "edit":
         return {
             "action": "edit",
-            "command": _text(body, "command", _MAX_COMMAND_CHARS, "the command"),
+            "command": _text(body, "command", MAX_COMMAND_CHARS, "the command"),
         }
     raise BadInput("Choose approve, reject or edit.", details=f"Got {action!r}.")

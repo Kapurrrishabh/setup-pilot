@@ -362,7 +362,8 @@ def test_preflight_says_which_failed_checks_stop_a_run(web, monkeypatch):
     assert failing == {"groq": False, "docker": False, "folder": True, "database": True}
 
 
-@pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.5", "::"])
+# "::1" is loopback, but the app binds and prints 127.0.0.1, so it would print a dead address.
+@pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.5", "::", "::1"])
 def test_web_server_can_never_listen_beyond_this_machine(host):
     with pytest.raises(ValidationError):
         WebConfig(host=host, port=5005, max_request_bytes=100, posts_per_minute=10)

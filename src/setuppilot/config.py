@@ -124,7 +124,7 @@ class ChatConfig(_Strict):
 
 
 # This app runs commands on your machine, so the web server never listens beyond it.
-WebHost = Literal["127.0.0.1", "localhost", "::1"]
+WebHost = Literal["127.0.0.1", "localhost"]
 
 
 class WebConfig(_Strict):

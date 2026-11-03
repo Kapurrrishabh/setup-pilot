@@ -1,7 +1,7 @@
 """Click through the web app in a real browser. test.sh starts the app and runs this file.
 
 Run by hand: start `uv run setuppilot web`, then
-uv run --with playwright python scripts/browser_check.py --work ~/setuppilot-test/browser
+uv run --group e2e python scripts/browser_check.py --work ~/setuppilot-test/browser
 """
 
 import argparse
