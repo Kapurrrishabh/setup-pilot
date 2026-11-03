@@ -28,8 +28,8 @@ def print_metrics(stores: Stores, limit: int) -> None:
     print(f"finished runs: {summary.finished_runs}   success rate: {rate}")
     print(f"average time: {_number(summary.average_seconds, 's')}")
     print(f"average tokens: {_number(summary.average_tokens, '')}")
-    print(f"rate-limit hits: {summary.rate_limit_hits}")
-    print(f"switched to the small model: {summary.small_model_fallbacks}")
+    print(f"rate-limit hits (all time, setup and chat): {summary.rate_limit_hits}")
+    print(f"switched to small model (all time, setup and chat): {summary.small_model_fallbacks}")
     for error_type, count in summary.common_errors:
         print(f"  {error_type}: {count}")
 
