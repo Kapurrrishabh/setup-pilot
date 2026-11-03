@@ -2,9 +2,9 @@ from pathlib import Path
 
 import pytest
 import yaml
-from pydantic import ValidationError
 
 from setuppilot.config import load_settings
+from setuppilot.errors import ConfigInvalid
 
 REAL_CONFIG = Path(__file__).parents[1] / "config.yaml"
 
@@ -21,15 +21,27 @@ def test_real_config_loads():
     load_settings(REAL_CONFIG)
 
 
+def test_missing_config_says_where_to_run_from(tmp_path):
+    with pytest.raises(ConfigInvalid, match="was not found") as raised:
+        load_settings(tmp_path / "config.yaml")
+    assert "project folder" in raised.value.details
+
+
+def test_broken_yaml_is_a_friendly_error(tmp_path):
+    (tmp_path / "config.yaml").write_text("web: [unclosed\n")
+    with pytest.raises(ConfigInvalid, match="not valid YAML"):
+        load_settings(tmp_path / "config.yaml")
+
+
 def test_unknown_key_is_rejected(tmp_path):
     path = write_config(tmp_path, lambda d: d["groq"].update(bigg={}))
-    with pytest.raises(ValidationError, match="bigg"):
+    with pytest.raises(ConfigInvalid, match="bigg"):
         load_settings(path)
 
 
 def test_zero_rate_limit_is_rejected(tmp_path):
     path = write_config(tmp_path, lambda d: d["groq"]["small"]["limits"].update(tokens_per_day=0))
-    with pytest.raises(ValidationError, match="tokens_per_day"):
+    with pytest.raises(ConfigInvalid, match="tokens_per_day"):
         load_settings(path)
 
 
@@ -37,11 +49,11 @@ def test_same_model_for_big_and_small_is_rejected(tmp_path):
     path = write_config(
         tmp_path, lambda d: d["groq"]["small"].update(name=d["groq"]["big"]["name"])
     )
-    with pytest.raises(ValidationError, match="limits are per model"):
+    with pytest.raises(ConfigInvalid, match="limits are per model"):
         load_settings(path)
 
 
 def test_run_budget_larger_than_day_budget_is_rejected(tmp_path):
     path = write_config(tmp_path, lambda d: d["budget"].update(tokens_per_run=10, tokens_per_day=5))
-    with pytest.raises(ValidationError, match="tokens_per_run"):
+    with pytest.raises(ConfigInvalid, match="tokens_per_run"):
         load_settings(path)

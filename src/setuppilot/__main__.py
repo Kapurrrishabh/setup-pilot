@@ -1,5 +1,6 @@
 import argparse
 import sys
+from importlib.metadata import version
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -26,6 +27,7 @@ ASK_MAX_TOKENS = 1024
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="setuppilot")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {version('setuppilot')}")
     commands = parser.add_subparsers(dest="command", required=True)
     ask = commands.add_parser("ask", help="Ask the BIG model one question and show tokens used.")
     ask.add_argument("question")
@@ -59,9 +61,9 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     load_dotenv(Path(".env"))
-    settings = load_settings(Path("config.yaml"))
-    setup_logging(settings.logging)
     try:
+        settings = load_settings(Path("config.yaml"))
+        setup_logging(settings.logging)
         if args.command == "ask":
             ask_one_question(settings, args.question)
         elif args.command == "db-check":

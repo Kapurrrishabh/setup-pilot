@@ -12,6 +12,10 @@ class SetupPilotError(Exception):
         self.details = details
 
 
+class ConfigInvalid(SetupPilotError):
+    """config.yaml is missing or has a mistake."""
+
+
 class BadURL(SetupPilotError):
     """The repo URL is not https://github.com/<owner>/<repo>."""
 

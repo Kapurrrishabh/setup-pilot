@@ -4,7 +4,17 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, PositiveInt, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PositiveFloat,
+    PositiveInt,
+    ValidationError,
+    model_validator,
+)
+
+from setuppilot.errors import ConfigInvalid
 
 
 class _Strict(BaseModel):
@@ -137,4 +147,18 @@ class Settings(_Strict):
 
 
 def load_settings(config_path: Path) -> Settings:
-    return Settings.model_validate(yaml.safe_load(config_path.read_text()))
+    try:
+        return Settings.model_validate(yaml.safe_load(config_path.read_text()))
+    except FileNotFoundError as error:
+        raise ConfigInvalid(
+            f"{config_path} was not found.",
+            details="Run setuppilot from the project folder, where config.yaml is.",
+        ) from error
+    except yaml.YAMLError as error:
+        raise ConfigInvalid(f"{config_path} is not valid YAML.", details=str(error)) from error
+    except ValidationError as error:
+        first = error.errors()[0]
+        where = ".".join(str(part) for part in first["loc"]) or "the top level"
+        raise ConfigInvalid(
+            f"{config_path} has a mistake at {where}: {first['msg']}.", details=str(error)
+        ) from error

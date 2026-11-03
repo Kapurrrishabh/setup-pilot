@@ -17,6 +17,21 @@ def in_empty_project(tmp_path, monkeypatch):
     return tmp_path
 
 
+def test_version_comes_from_the_package(capsys):
+    with pytest.raises(SystemExit) as exit_info:
+        main(["--version"])
+    assert exit_info.value.code == 0
+    assert capsys.readouterr().out.strip() == "setuppilot 0.1.0"
+
+
+def test_running_outside_the_project_folder_is_a_friendly_error(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as exit_info:
+        main(["runs"])
+    assert exit_info.value.code == 1
+    assert "config.yaml was not found" in capsys.readouterr().err
+
+
 def test_ask_without_api_key_exits_with_a_friendly_message(in_empty_project, monkeypatch, capsys):
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     with pytest.raises(SystemExit) as exit_info:
