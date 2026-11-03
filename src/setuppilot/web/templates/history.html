@@ -1,22 +1,52 @@
 {% extends "base.html" %}
-{% block title %} · runs{% endblock %}
+{% from "_macros.html" import when %}
+{% block title %}Runs · {% endblock %}
 {% block content %}
-<h1>Runs</h1>
-<table>
-  <thead><tr><th>Started (UTC)</th><th>Repo</th><th>Status</th><th>Time</th><th>Tokens</th><th>Error</th></tr></thead>
-  <tbody>
-  {% for row in rows %}
-    <tr>
-      <td><a href="{{ url_for('run_page', run_id=row.run.id) }}">{{ row.run.created_at.strftime('%Y-%m-%d %H:%M') }}</a></td>
-      <td>{{ row.run.repo_url }}</td>
-      <td class="status-{{ row.run.status }}">{{ row.run.status }}</td>
-      <td>{{ '%.0fs'|format(row.seconds) if row.seconds is not none else '-' }}</td>
-      <td>{{ row.tokens }}</td>
-      <td>{{ row.run.error_type or '' }}</td>
-    </tr>
-  {% else %}
-    <tr><td colspan="6">No runs yet.</td></tr>
-  {% endfor %}
-  </tbody>
-</table>
+<div class="page-head">
+  <h1>Runs</h1>
+  <p class="lead">Your last {{ history_limit }} setup runs, newest first. Open one to see its steps and report.</p>
+</div>
+{% if rows %}
+<div id="runs-tools" class="toolbar" hidden>
+  <div class="filters" role="group" aria-label="Show runs">
+    <button type="button" class="filter" data-status="" aria-pressed="true">All <span class="count">{{ rows|length }}</span></button>
+    {% for status, label in page_labels.statuses.items() %}
+      {% set count = statuses.values()|select('equalto', status)|list|length %}
+      {% if count %}<button type="button" class="filter" data-status="{{ status }}" aria-pressed="false">{{ label }} <span class="count">{{ count }}</span></button>{% endif %}
+    {% endfor %}
+  </div>
+  <div class="search">
+    <label for="runs-search" class="visually-hidden">Find a repo</label>
+    <input type="search" id="runs-search" placeholder="Find a repo, like pypa/sampleproject" autocomplete="off" autocapitalize="off" spellcheck="false">
+  </div>
+</div>
+<p id="runs-count" class="muted" role="status">{{ rows|length }} {{ 'run' if rows|length == 1 else 'runs' }}</p>
+<div class="table-wrap" role="region" aria-label="Setup runs" tabindex="0">
+  <table class="runs">
+    <thead><tr><th scope="col">Repo</th><th scope="col">Result</th><th scope="col">Started</th><th scope="col" class="num">Took</th><th scope="col" class="num">Tokens</th><th scope="col">Problem</th></tr></thead>
+    <tbody>
+    {% for row in rows %}
+      <tr data-status="{{ statuses[row.run.id] }}" data-repo="{{ row.run.repo_url|repo_name|lower }}">
+        <td class="repo"><a href="{{ url_for('run_page', run_id=row.run.id) }}" title="{{ row.run.repo_url }}">{{ row.run.repo_url|repo_name }}</a></td>
+        <td class="result"><span class="badge" data-status="{{ statuses[row.run.id] }}">{{ statuses[row.run.id]|status_label }}</span></td>
+        <td class="when">{{ when(row.run.created_at) }}</td>
+        <td class="num took">{% if row.seconds is not none %}{{ row.seconds|duration }}{% else %}<span class="muted">Not finished</span>{% endif %}</td>
+        <td class="num tokens"><span class="cell-label">Tokens </span>{{ row.tokens|number }}</td>
+        <td class="problem">{% if row.run.error_type and row.run.status != 'cancelled' %}<span title="{{ row.run.message or '' }}">{{ row.run.error_type|error_label }}</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p id="runs-none" class="empty-note" hidden>No runs match. <button type="button" id="runs-clear" class="link-button">Show all runs</button></p>
+<div class="more"><button type="button" id="runs-more" class="secondary" hidden>Show more</button></div>
+{% else %}
+<section class="card empty">
+  <span class="empty-mark" aria-hidden="true">+</span>
+  <h2>No runs yet</h2>
+  <p class="muted">When you set up a repo, it shows up here with its steps and report.</p>
+  <div class="actions"><a class="button" href="{{ url_for('setup_page') }}">Set up a repo</a></div>
+</section>
+{% endif %}
 {% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='history.js') }}"></script>{% endblock %}

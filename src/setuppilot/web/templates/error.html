@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · {% endblock %}
+{% block content %}
+<section class="card empty">
+  <span class="empty-mark" aria-hidden="true">?</span>
+  <h1>{{ title }}</h1>
+  <p>{{ message }}</p>
+  {% if details %}<p class="muted">{{ details }}</p>{% endif %}
+  {% if database_warning %}<p class="muted">Without a database, runs are kept in memory only, so they are gone after SetupPilot restarts.</p>{% endif %}
+  <div class="actions">
+    <a class="button" href="{{ url_for('history_page') }}">See all runs</a>
+    <a class="button secondary" href="{{ url_for('setup_page') }}">Set up a repo</a>
+  </div>
+</section>
+{% endblock %}

@@ -1,20 +1,48 @@
 {% extends "base.html" %}
+{% block title %}Set up a repo · {% endblock %}
 {% block content %}
-<h1>Set up a GitHub repo</h1>
-<form id="setup-form" class="card">
-  <label>Public GitHub URL
-    <input name="repo_url" required maxlength="300" placeholder="https://github.com/owner/repo">
-  </label>
-  <label>Folder to clone into (it must exist)
-    <input name="dest_dir" required maxlength="500" placeholder="/Users/you/work">
-  </label>
-  <label class="inline"><input type="checkbox" name="use_docker"> Install inside a Docker container (safer for repos you do not trust; for those, close this app and use <code>setuppilot run --docker</code>, because a container can reach this app)</label>
-  <p class="warn-text">{{ warning }}</p>
-  <button type="submit">Start setup</button>
-</form>
-<section class="card">
-  <h2>Pre-flight checklist</h2>
-  <ul id="preflight" class="checks"><li>Checking…</li></ul>
-</section>
+<div class="page-head">
+  <h1>Set up a GitHub repo</h1>
+  <p class="lead">SetupPilot downloads the repo, checks your tools and installs what it needs. It asks you before every command.</p>
+</div>
+<div class="split">
+  <form id="setup-form" class="card">
+    <div class="field">
+      <label for="repo-url">Public GitHub URL</label>
+      <input id="repo-url" name="repo_url" required maxlength="300" placeholder="https://github.com/owner/repo" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="repo-url-hint">
+      <p id="repo-url-hint" class="hint">Only public repos on github.com, like https://github.com/pypa/sampleproject.</p>
+    </div>
+    <div class="field">
+      <label for="dest-dir">Folder to put the repo in</label>
+      <input id="dest-dir" name="dest_dir" required maxlength="500" placeholder="~/work" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="dest-dir-hint">
+      <p id="dest-dir-hint" class="hint">It must already exist. SetupPilot makes a new folder named after the repo inside it. You can type ~ for your home folder.</p>
+    </div>
+    <div class="field">
+      <label class="check-row">
+        <input type="checkbox" id="use-docker" name="use_docker" aria-describedby="docker-hint">
+        <span>Install inside a Docker container</span>
+      </label>
+      <p id="docker-hint" class="hint indent">Safer for repos you do not fully trust. It is not a full sandbox here, because a container can reach this app. For a repo you do not trust at all, close this app and run <code>setuppilot run &lt;url&gt; &lt;folder&gt; --docker</code> in a terminal.</p>
+      <p id="docker-problem" class="callout bad" hidden>Docker is not running. Start Docker Desktop or run <code>colima start</code>, then press Check again.</p>
+    </div>
+    <div class="callout warn">
+      <div>
+        <strong>Before you start</strong>
+        <p>{{ warning }}</p>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button type="submit" id="start">Start setup</button>
+    </div>
+  </form>
+  <section class="card" aria-labelledby="preflight-title">
+    <div class="card-head">
+      <h2 id="preflight-title">Pre-flight check</h2>
+      <button type="button" id="preflight-again" class="secondary small">Check again</button>
+    </div>
+    <p id="preflight-summary" class="summary" role="status">Checking…</p>
+    <ul id="preflight" class="checks"><li class="pending">Checking…</li></ul>
+  </section>
+</div>
 {% endblock %}
 {% block scripts %}<script src="{{ url_for('static', filename='setup.js') }}"></script>{% endblock %}

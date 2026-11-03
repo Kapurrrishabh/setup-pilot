@@ -1,0 +1,4 @@
+{# A time in UTC. app.js shows it in the reader's own time zone. #}
+{% macro when(moment) -%}
+<time datetime="{{ moment.isoformat(timespec='seconds') }}">{{ moment.strftime('%Y-%m-%d %H:%M') }} UTC</time>
+{%- endmacro %}

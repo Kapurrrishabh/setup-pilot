@@ -4,13 +4,16 @@ import logging
 import threading
 from collections.abc import Callable
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 from setuppilot.agent.driver import Finished, SetupAgent, Stopped, Waiting
-from setuppilot.db.runs import FINISHED_STATUSES, RunStore
+from setuppilot.db.runs import FINISHED_STATUSES, Run, RunStore
 from setuppilot.errors import SetupPilotError
 from setuppilot.guardrails.runner import cancel_group
 from setuppilot.logging_setup import run_id_var
+from setuppilot.tools.github_url import parse_github_url
+from setuppilot.web.labels import duration_text, step_tone
 
 log = logging.getLogger(__name__)
 
@@ -43,13 +46,14 @@ class RunManager:
         self._runs = runs
         self._tracker = tracker
         self._lock = threading.Lock()
-        self._busy: set[str] = set()
+        # Each busy run, with the approved command it is running (None for other work).
+        self._busy: dict[str, str | None] = {}
         self._problems: dict[str, dict[str, str]] = {}
 
     def start(self, repo_url: str, dest_dir: str, use_docker: bool) -> str:
         run = self._runs.create_run(repo_url, dest_dir)
         self._in_background(
-            run.id, lambda: self._agent.begin(run.id, repo_url, dest_dir, use_docker)
+            run.id, lambda: self._agent.begin(run.id, repo_url, dest_dir, use_docker), command=None
         )
         return run.id
 
@@ -57,12 +61,15 @@ class RunManager:
         state = self._agent.peek(run_id)
         if not isinstance(state, Waiting) or state.question_id != question_id:
             raise RunNotWaiting("This question was already answered or has changed.")
-        self._in_background(run_id, lambda: self._agent.answer(run_id, question_id, reply))
+        command = state.question.get("command") if reply.get("action") == "approve" else None
+        self._in_background(
+            run_id, lambda: self._agent.answer(run_id, question_id, reply), command=command
+        )
 
     def carry_on(self, run_id: str) -> None:
         if not isinstance(self._agent.peek(run_id), Stopped):
             raise RunNotWaiting("This run has nothing left to carry on with.")
-        self._in_background(run_id, lambda: self._agent.carry_on(run_id))
+        self._in_background(run_id, lambda: self._agent.carry_on(run_id), command=None)
 
     def cancel(self, run_id: str) -> None:
         if self._runs.get_run(run_id).status in FINISHED_STATUSES:
@@ -73,11 +80,18 @@ class RunManager:
         if group is not None:
             threading.Thread(target=cancel_group, args=(group,), daemon=True).start()
 
+    def shown_status(self, run: Run) -> str:
+        """A run saved as running with no worker was stopped by a restart, so it waits for you."""
+        with self._lock:
+            is_busy = run.id in self._busy
+        return "paused" if run.status == "running" and not is_busy else run.status
+
     def view(self, run_id: str) -> dict[str, Any]:
         """Everything the live page shows. Read from saved state, so it survives a refresh."""
         run = self._runs.get_run(run_id)
         with self._lock:
             is_busy = run_id in self._busy
+            running_command = self._busy.get(run_id)
             problem = self._problems.get(run_id)
         state: Waiting | Stopped | Finished | None = None
         if not is_busy:
@@ -86,10 +100,19 @@ class RunManager:
             except LookupError:
                 state = None
         is_cancelled = run.status == "cancelled"
+        steps = self._runs.list_steps(run_id)
+        is_cloned = any(s.name == "clone" and s.is_ok for s in steps)
+        # The folder clone_repo made. A clone that worked also proves the URL parses.
+        repo_dir = Path(run.dest_dir) / parse_github_url(run.repo_url).name if is_cloned else None
         return {
             "run": {k: str(v) if v is not None else None for k, v in asdict(run).items()},
-            "steps": [asdict(s) for s in self._runs.list_steps(run_id)],
+            "steps": [
+                asdict(s) | {"tone": step_tone(s), "duration": duration_text(s.duration_ms / 1000)}
+                for s in steps
+            ],
+            "repo_dir": str(repo_dir) if repo_dir else None,
             "is_busy": is_busy,
+            "running_command": running_command,
             "question": state.question if isinstance(state, Waiting) and not is_cancelled else None,
             "question_id": state.question_id if isinstance(state, Waiting) else None,
             "can_carry_on": isinstance(state, Stopped) and not is_cancelled,
@@ -99,14 +122,16 @@ class RunManager:
             "problem": problem,
         }
 
-    def _in_background(self, run_id: str, work: Callable[[], object]) -> None:
+    def _in_background(
+        self, run_id: str, work: Callable[[], object], *, command: str | None
+    ) -> None:
         # Read from the database too: a cancel from before a restart still counts.
         if self._runs.get_run(run_id).status == "cancelled":
             raise RunNotWaiting("This run was cancelled. Start a new run instead.")
         with self._lock:
             if run_id in self._busy:
                 raise RunNotWaiting("This run is still working. Wait for it to finish this step.")
-            self._busy.add(run_id)
+            self._busy[run_id] = command
             self._problems.pop(run_id, None)
         threading.Thread(target=self._work, args=(run_id, work), daemon=True).start()
 
@@ -124,7 +149,7 @@ class RunManager:
             run_id_var.reset(token)
             self._tracker.forget(run_id)
             with self._lock:
-                self._busy.discard(run_id)
+                self._busy.pop(run_id, None)
 
     def _remember_problem(self, run_id: str, message: str, details: str) -> None:
         with self._lock:

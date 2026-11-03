@@ -1,28 +1,45 @@
 {% extends "base.html" %}
-{% block title %} · settings{% endblock %}
+{% block title %}Settings · {% endblock %}
 {% block content %}
-<h1>Settings and limits</h1>
-{% if llm_problem %}<div class="banner warn">{{ llm_problem }}</div>{% endif %}
-<section class="card">
-  <h2>Token budget</h2>
-  <p>Tokens used today: <strong>{{ tokens_today }}</strong> / {{ budget.tokens_per_day }} (per run: {{ budget.tokens_per_run }})</p>
+<div class="page-head">
+  <h1>Settings and limits</h1>
+  <p class="lead">These come from config.yaml and .env. To change them, edit those files and restart SetupPilot.</p>
+</div>
+{% if llm_problem %}<div class="banner warn"><p>{{ llm_problem }}</p></div>{% endif %}
+<section class="card" aria-labelledby="budget-title">
+  <h2 id="budget-title">Token budget</h2>
+  <p class="stat"><strong>{{ tokens_today|number }}</strong><span>of {{ budget.tokens_per_day|number }} tokens used today</span></p>
+  <meter class="budget" min="0" max="{{ budget.tokens_per_day }}" low="{{ budget.tokens_per_day * 0.6 }}" high="{{ budget.tokens_per_day * 0.85 }}" optimum="0" value="{{ tokens_today }}" aria-label="Tokens used today"></meter>
+  <p class="muted">Each run can use up to {{ budget.tokens_per_run|number }} tokens. The daily count starts again at midnight UTC.</p>
 </section>
-<section class="card">
-  <h2>Groq models</h2>
-  <table>
-    <thead><tr><th>Role</th><th>Model</th><th>Requests left today</th><th>Per minute</th><th>Tokens per minute</th><th>Tokens per day</th></tr></thead>
-    <tbody>
-    {% for m in models %}
-      <tr><td>{{ m.role }}</td><td>{{ m.name }}</td><td>{{ m.limits.requests_per_day - m.calls }} / {{ m.limits.requests_per_day }}</td>
-          <td>{{ m.limits.requests_per_minute }}</td><td>{{ m.limits.tokens_per_minute }}</td><td>{{ m.limits.tokens_per_day }}</td></tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  <p class="muted">Limits come from config.yaml; copy your real ones from console.groq.com/settings/limits. Days are UTC.</p>
+<section class="card" aria-labelledby="models-title">
+  <h2 id="models-title">Groq models</h2>
+  <div class="table-wrap flush" role="region" aria-label="Model limits" tabindex="0">
+    <table class="models">
+      <thead><tr><th scope="col">Role</th><th scope="col">Model</th><th scope="col" class="num">Requests left today</th><th scope="col" class="num">Requests per minute</th><th scope="col" class="num">Tokens per minute</th><th scope="col" class="num">Tokens per day</th></tr></thead>
+      <tbody>
+      {% for m in models %}
+        <tr>
+          <td><span class="badge" data-tone="{{ 'info' if m.role == 'Main' else 'neutral' }}">{{ m.role }}</span></td>
+          <td><code>{{ m.name }}</code></td>
+          <td class="num"><span class="cell-label">Requests left today </span>{{ (m.limits.requests_per_day - m.calls)|number }} of {{ m.limits.requests_per_day|number }}</td>
+          <td class="num"><span class="cell-label">Requests per minute </span>{{ m.limits.requests_per_minute|number }}</td>
+          <td class="num"><span class="cell-label">Tokens per minute </span>{{ m.limits.tokens_per_minute|number }}</td>
+          <td class="num"><span class="cell-label">Tokens per day </span>{{ m.limits.tokens_per_day|number }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted">The backup model is used when the main one hits a limit, and for short chat summaries. Copy your real limits from <a href="https://console.groq.com/settings/limits" rel="noreferrer">console.groq.com/settings/limits</a>.</p>
 </section>
-<section class="card">
-  <h2>Other</h2>
-  <p>Database: {{ 'connected' if not database_warning else 'not connected (memory only)' }}</p>
-  <p>LangSmith tracing: {{ 'on' if is_tracing_on else 'off' }}</p>
+<section class="card" aria-labelledby="other-title">
+  <h2 id="other-title">Other</h2>
+  <dl class="facts">
+    <dt>Database</dt>
+    <dd>{% if database_warning %}<span class="badge" data-tone="warn">Not connected</span> Runs are kept in memory and are lost when the app stops.{% else %}<span class="badge" data-tone="ok">Connected</span> Runs are saved and survive a restart.{% endif %}</dd>
+    <dt>LangSmith tracing</dt>
+    <dd>{% if is_tracing_on %}<span class="badge" data-tone="ok">On</span> Traces go to LangSmith.{% else %}<span class="badge" data-tone="neutral">Off</span> Set LANGSMITH_TRACING=true in .env to turn it on.{% endif %}</dd>
+  </dl>
 </section>
 {% endblock %}

@@ -22,6 +22,7 @@ from setuppilot.errors import NotFound, SetupPilotError
 from setuppilot.guardrails.commands import INSTALL_SCRIPT_WARNING
 from setuppilot.llm.groq import is_tracing_on
 from setuppilot.tools.github_url import parse_github_url
+from setuppilot.web.labels import PAGE_LABELS, STATUS_LABELS, duration_text, error_label, repo_name
 from setuppilot.web.runs import RunManager
 from setuppilot.web.security import protect
 
@@ -51,22 +52,42 @@ def create_app(services: WebServices) -> Flask:
     token = protect(app, services.settings.web)
     chats: dict[tuple[str, str], ChatSession] = {}
     stores, settings = services.stores, services.settings
+    app.jinja_env.globals["page_labels"] = PAGE_LABELS
+    app.jinja_env.filters |= {
+        "status_label": lambda status: STATUS_LABELS[status],
+        "error_label": error_label,
+        "duration": duration_text,
+        "repo_name": repo_name,
+        "number": lambda value: f"{value:,.0f}",
+    }
 
     def page(name: str, **values: Any) -> str:
         return render_template(
             name, csrf_token=token, database_warning=stores.database_warning, **values
         )
 
+    def is_page_request() -> bool:
+        return not request.path.startswith("/api/")
+
+    def error_page(code: int, title: str, message: str, details: str):
+        return page("error.html", title=title, message=message, details=details), code
+
     @app.errorhandler(SetupPilotError)
     def friendly_error(error: SetupPilotError):
+        if is_page_request():
+            return error_page(400, "Something went wrong", error.message, error.details)
         return jsonify(error={"message": error.message, "details": error.details}), 400
 
     @app.errorhandler(NotFound)
     def not_found(error: NotFound):
+        if is_page_request():
+            return error_page(404, "Run not found", str(error), "")
         return jsonify(error={"message": str(error), "details": ""}), 404
 
     @app.errorhandler(HTTPException)
     def http_error(error: HTTPException):
+        if error.code == 404 and is_page_request():
+            return error_page(404, "Page not found", "There is no page at this address.", "")
         # The same JSON shape as every other error, so the page banner can show it.
         body = {"message": error.description, "details": f"HTTP {error.code}"}
         return jsonify(error=body), error.code
@@ -82,8 +103,8 @@ def create_app(services: WebServices) -> Flask:
     @app.post("/api/runs")
     def start_run():
         body = _json_body()
-        url = parse_github_url(_text(body, "repo_url", 300)).url
-        folder = Path(_text(body, "dest_dir", 500)).expanduser().resolve()
+        url = parse_github_url(_text(body, "repo_url", 300, "the GitHub URL")).url
+        folder = Path(_text(body, "dest_dir", 500, "the folder")).expanduser().resolve()
         if not folder.is_dir():
             raise BadInput("That folder does not exist.", details=f"Create {folder} first.")
         run_id = services.runs.start(url, str(folder), body.get("use_docker") is True)
@@ -91,8 +112,8 @@ def create_app(services: WebServices) -> Flask:
 
     @app.get("/runs/<run_id>")
     def run_page(run_id: str):
-        stores.runs.get_run(run_id)
-        return page("run.html", run_id=run_id, warning=INSTALL_SCRIPT_WARNING)
+        run = stores.runs.get_run(run_id)
+        return page("run.html", run=run, warning=INSTALL_SCRIPT_WARNING)
 
     @app.get("/api/runs/<run_id>")
     def run_view(run_id: str):
@@ -115,7 +136,8 @@ def create_app(services: WebServices) -> Flask:
                     # Writing is the only way to notice that the tab was closed.
                     yield ": ping\n\n"
                     quiet_since = time.monotonic()
-                if view["report"] is not None or view["run"]["status"] == "cancelled":
+                is_cancelled = view["run"]["status"] == "cancelled"
+                if view["report"] is not None or (is_cancelled and not view["is_busy"]):
                     return
                 time.sleep(_EVENT_SECONDS)
 
@@ -124,7 +146,9 @@ def create_app(services: WebServices) -> Flask:
     @app.post("/api/runs/<run_id>/answer")
     def answer(run_id: str):
         body = _json_body()
-        services.runs.answer(run_id, _text(body, "question_id", 100), _reply(body))
+        services.runs.answer(
+            run_id, _text(body, "question_id", 100, "the question id"), _reply(body)
+        )
         return jsonify(ok=True)
 
     @app.post("/api/runs/<run_id>/cancel")
@@ -141,12 +165,13 @@ def create_app(services: WebServices) -> Flask:
     @app.get("/runs")
     def history_page():
         rows = recent_runs(stores.runs, stores.usage, HISTORY_LIMIT)
-        return page("history.html", rows=rows)
+        statuses = {row.run.id: services.runs.shown_status(row.run) for row in rows}
+        return page("history.html", rows=rows, statuses=statuses, history_limit=HISTORY_LIMIT)
 
     @app.get("/metrics")
     def metrics_page():
         summary = metrics_summary(stores.runs, stores.usage, stores.metrics, HISTORY_LIMIT)
-        return page("metrics.html", summary=summary)
+        return page("metrics.html", summary=summary, history_limit=HISTORY_LIMIT)
 
     @app.get("/settings")
     def settings_page():
@@ -154,7 +179,7 @@ def create_app(services: WebServices) -> Flask:
         calls = stores.usage.calls_on_day_by_model(today)
         models = [
             {"role": role, "name": m.name, "limits": m.limits, "calls": calls.get(m.name, 0)}
-            for role, m in (("BIG", settings.groq.big), ("SMALL", settings.groq.small))
+            for role, m in (("Main", settings.groq.big), ("Backup", settings.groq.small))
         ]
         return page(
             "settings.html",
@@ -171,7 +196,7 @@ def create_app(services: WebServices) -> Flask:
 
     @app.post("/api/chat/index")
     def index_for_chat():
-        url = _text(_json_body(), "repo_url", 300)
+        url = _text(_json_body(), "repo_url", 300, "the GitHub URL")
         key, result = index_github_repo(settings, url, services.embedder, stores.chat_index)
         return jsonify(repo=key, chunks=result.chunks, dropped=result.dropped)
 
@@ -180,8 +205,8 @@ def create_app(services: WebServices) -> Flask:
         if services.make_chatbot is None:
             raise BadInput("The chatbot needs a Groq key.", details=services.llm_problem or "")
         body = _json_body()
-        repo = _text(body, "repo", 200)
-        question = _text(body, "question", MAX_QUESTION_CHARS)
+        repo = _text(body, "repo", 200, "the repo")
+        question = _text(body, "question", MAX_QUESTION_CHARS, "a question")
         session.setdefault("chat_id", secrets.token_urlsafe(16))
         chat = chats.setdefault((session["chat_id"], repo), ChatSession(repo))
         answer = services.make_chatbot().ask(chat, question)
@@ -197,13 +222,10 @@ def _json_body() -> dict[str, Any]:
     return body
 
 
-def _text(body: dict[str, Any], name: str, max_chars: int) -> str:
+def _text(body: dict[str, Any], name: str, max_chars: int, label: str) -> str:
     value = body.get(name)
     if not isinstance(value, str) or not value.strip() or len(value) > max_chars:
-        raise BadInput(
-            f"Please fill in {name.replace('_', ' ')}.",
-            details=f"{name} must be text of 1 to {max_chars} characters.",
-        )
+        raise BadInput(f"Please fill in {label}.", details=f"Use 1 to {max_chars} characters.")
     return value.strip()
 
 
@@ -217,5 +239,8 @@ def _reply(body: dict[str, Any]) -> dict[str, Any]:
     if action in ("approve", "reject"):
         return {"action": action}
     if action == "edit":
-        return {"action": "edit", "command": _text(body, "command", _MAX_COMMAND_CHARS)}
+        return {
+            "action": "edit",
+            "command": _text(body, "command", _MAX_COMMAND_CHARS, "the command"),
+        }
     raise BadInput("Choose approve, reject or edit.", details=f"Got {action!r}.")

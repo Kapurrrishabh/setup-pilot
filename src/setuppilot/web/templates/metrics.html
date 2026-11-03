@@ -1,20 +1,35 @@
 {% extends "base.html" %}
-{% block title %} · metrics{% endblock %}
+{% block title %}Metrics · {% endblock %}
 {% block content %}
-<h1>Metrics</h1>
-<div class="tiles">
-  <div class="tile"><span>Finished runs</span><strong>{{ summary.finished_runs }}</strong></div>
-  <div class="tile"><span>Success rate</span><strong>{{ '%.0f%%'|format(summary.success_rate * 100) if summary.success_rate is not none else '-' }}</strong></div>
-  <div class="tile"><span>Average time</span><strong>{{ '%.0fs'|format(summary.average_seconds) if summary.average_seconds is not none else '-' }}</strong></div>
-  <div class="tile"><span>Average tokens</span><strong>{{ '%.0f'|format(summary.average_tokens) if summary.average_tokens is not none else '-' }}</strong></div>
-  <div class="tile"><span>Rate-limit hits</span><strong>{{ summary.rate_limit_hits }}</strong></div>
-  <div class="tile"><span>Switched to small model</span><strong>{{ summary.small_model_fallbacks }}</strong></div>
+<div class="page-head">
+  <h1>Metrics</h1>
+  <p class="lead">How your last {{ history_limit }} runs went. Only finished runs count for the first four numbers.</p>
 </div>
-<section class="card">
-  <h2>Most common errors</h2>
-  <ul>
-  {% for error_type, count in summary.common_errors %}<li>{{ error_type }}: {{ count }}</li>{% else %}<li>None.</li>{% endfor %}
+{% if not summary.finished_runs %}
+<p class="callout info">No finished runs yet. Set up a repo and the numbers show up here.</p>
+{% endif %}
+<div class="tiles">
+  <div class="tile"><span class="tile-label">Finished runs</span><strong>{{ summary.finished_runs|number }}</strong><span class="hint">of your last {{ history_limit }} runs</span></div>
+  <div class="tile"><span class="tile-label">Success rate</span><strong>{{ '%.0f%%'|format(summary.success_rate * 100) if summary.success_rate is not none else '–' }}</strong><span class="hint">verified; cancelled runs count as not verified</span></div>
+  <div class="tile"><span class="tile-label">Average time</span><strong>{{ summary.average_seconds|duration if summary.average_seconds is not none else '–' }}</strong><span class="hint">includes time waiting for you</span></div>
+  <div class="tile"><span class="tile-label">Average tokens per run</span><strong>{{ summary.average_tokens|number if summary.average_tokens is not none else '–' }}</strong><span class="hint">AI tokens for README tips and reports</span></div>
+  <div class="tile"><span class="tile-label">Rate-limit hits</span><strong>{{ summary.rate_limit_hits|number }}</strong><span class="hint">times Groq asked SetupPilot to slow down (all time, setup and chat)</span></div>
+  <div class="tile"><span class="tile-label">Used the backup model</span><strong>{{ summary.small_model_fallbacks|number }}</strong><span class="hint">times the main model hit a limit (all time, setup and chat)</span></div>
+</div>
+<section class="card" aria-labelledby="errors-title">
+  <div class="card-head">
+    <h2 id="errors-title">Why runs did not succeed</h2>
+    {% if summary.common_errors %}<a href="{{ url_for('history_page', status='failed') }}">See runs that were not verified</a>{% endif %}
+  </div>
+  {% if summary.common_errors %}
+  <ul class="bars">
+    {# most_common() sorts by count, so the first one sets the scale. #}
+    {% for error_type, count in summary.common_errors %}
+      <li{% if error_type == 'RunCancelled' %} class="neutral"{% endif %}><span class="bar-label">{{ error_type|error_label }}</span><meter min="0" max="{{ summary.common_errors[0][1] }}" value="{{ count }}" aria-hidden="true"></meter><span class="num">{{ count }} {{ 'run' if count == 1 else 'runs' }}</span></li>
+    {% endfor %}
   </ul>
+  {% else %}
+  <p class="muted">Nothing has gone wrong yet.</p>
+  {% endif %}
 </section>
-<p class="muted">A run's time includes any time it waited for your approval.</p>
 {% endblock %}

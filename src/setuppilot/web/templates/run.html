@@ -1,43 +1,93 @@
 {% extends "base.html" %}
-{% block title %} · run{% endblock %}
+{% from "_macros.html" import when %}
+{% block title %}Setup run · {% endblock %}
 {% block content %}
-<div id="run" data-run-id="{{ run_id }}">
-  <h1>Setup run</h1>
-  <p class="muted"><span id="repo"></span> · status <strong id="status"></strong> <span id="busy" hidden>· working…</span></p>
-  <section id="question" class="card" hidden>
-    <h2 id="question-title"></h2>
+<div id="run" data-run-id="{{ run.id }}" data-repo-name="{{ run.repo_url|repo_name }}">
+  <section class="card run-head" aria-labelledby="run-title">
+    <p class="eyebrow">Setup run</p>
+    <h1 id="run-title"><a id="repo" href="{{ run.repo_url }}" title="{{ run.repo_url }}" rel="noreferrer">{{ run.repo_url|repo_name }}</a></h1>
+    <p class="run-meta">
+      <span id="status" class="badge" data-status="{{ run.status }}">{{ run.status|status_label }}</span>
+      <span>Into <code class="path">{{ run.dest_dir }}</code></span>
+      <span>Started {{ when(run.created_at) }}</span>
+    </p>
+    <p id="progress-text" class="progress-text">Loading…</p>
+    <ol id="progress" class="progress">
+      {% for phase in page_labels.phases %}<li><span>{{ phase }}</span></li>{% endfor %}
+    </ol>
+    <p id="now" class="now" tabindex="-1" hidden><span class="spinner" aria-hidden="true"></span><span id="now-text"></span><span id="now-time" class="now-time"></span></p>
+  </section>
+
+  <section id="question" class="card attention" aria-labelledby="question-title" hidden>
+    <div class="question-head">
+      <h2 id="question-title" tabindex="-1"></h2>
+      <span id="question-docker" class="badge" data-tone="info" hidden>Docker mode</span>
+    </div>
     <p id="question-reason"></p>
-    <pre id="question-command"></pre>
-    <p id="question-warning" class="warn-text"></p>
-    <p id="question-edit-error" class="error-text" hidden></p>
-    <div id="question-options"></div>
+    <p id="question-edit-error" class="callout bad" role="alert" hidden></p>
+    <p id="question-edited" class="callout ok" hidden>This is your edited command. It passed the safety check. Approve it to run it, or edit it again.</p>
+    <div id="command-box">
+      <p class="field-label">Command</p>
+      <pre id="question-command" class="command"></pre>
+      <details id="question-note" class="note">
+        <summary id="question-warning"></summary>
+        <p>{{ warning }}</p>
+      </details>
+    </div>
+    <div id="question-options" class="options"></div>
     <div id="question-actions" class="actions">
-      <button data-action="approve">Approve</button>
-      <button data-action="reject" class="secondary">Reject</button>
-      <button data-action="edit" class="secondary">Edit…</button>
+      <button type="button" data-action="approve" aria-keyshortcuts="a">Approve <kbd aria-hidden="true">A</kbd></button>
+      <button type="button" data-action="reject" class="secondary" aria-keyshortcuts="r">Reject <kbd aria-hidden="true">R</kbd></button>
+      <button type="button" data-action="edit" class="secondary" aria-keyshortcuts="e" aria-expanded="false" aria-controls="edit-box">Edit… <kbd aria-hidden="true">E</kbd></button>
     </div>
-    <div id="edit-box" hidden>
-      <input id="edit-command" maxlength="1000">
-      <button id="edit-send">Send edited command</button>
+    <p id="keys-hint" class="hint keys-hint"></p>
+    <form id="edit-box" class="edit-box" hidden>
+      <label for="edit-command">Your version of the command</label>
+      <textarea id="edit-command" maxlength="1000" rows="2" required spellcheck="false" autocapitalize="off" autocomplete="off" enterkeyhint="send" aria-describedby="edit-hint"></textarea>
+      <p id="edit-hint" class="hint">It is checked against the same safety rules, and you approve it again before it runs. Enter sends it, Esc closes this box.</p>
+      <div class="actions">
+        <button id="edit-send" type="submit">Check my edit</button>
+        <button id="edit-cancel" type="button" class="secondary">Cancel</button>
+      </div>
+    </form>
+  </section>
+
+  <section id="stopped" class="card attention" aria-labelledby="stopped-title" hidden>
+    <h2 id="stopped-title">SetupPilot stopped in the middle of a step</h2>
+    <p>This happens when the app was closed or restarted while the run was busy. You can carry on from the last saved point. The last command you approved may run again.</p>
+    <div class="actions"><button id="carry-on" type="button">Carry on from the last saved point</button></div>
+  </section>
+
+  <section id="report-card" class="card outcome" aria-labelledby="report-title" hidden>
+    <div class="outcome-head">
+      <span class="outcome-mark" aria-hidden="true"></span>
+      <div>
+        <h2 id="report-title" tabindex="-1"></h2>
+        <p id="outcome-message"></p>
+      </div>
+    </div>
+    <p id="outcome-fix" class="fix" hidden></p>
+    <details id="outcome-output" hidden><summary>Show the last lines of the output</summary><pre id="outcome-output-text" class="output" tabindex="0"></pre></details>
+    <p id="outcome-retry" hidden></p>
+    <div id="outcome-actions" class="actions"></div>
+    <div id="report-box">
+      <h3>Report</h3>
+      <pre id="report" class="report" tabindex="0"></pre>
     </div>
   </section>
-  <section id="stopped" class="card" hidden>
-    <p>The app stopped in the middle of a step. You can carry on from the last saved point;
-       the last approved command may run again.</p>
-    <button id="carry-on">Carry on</button>
+
+  <section class="card" aria-labelledby="steps-title">
+    <h2 id="steps-title" tabindex="-1">Timeline</h2>
+    <p id="steps-empty" class="muted">Nothing yet. The first step shows up in a few seconds.</p>
+    <ol id="steps" class="timeline"></ol>
   </section>
-  <section class="card">
-    <h2>Steps</h2>
-    <ol id="steps" class="steps"></ol>
-  </section>
-  <section id="report-card" class="card" hidden>
-    <h2 id="report-title">Report</h2>
-    <pre id="report"></pre>
-  </section>
-  <div class="actions">
-    <button id="cancel" class="danger">Cancel run</button>
-    <a class="button secondary" href="{{ url_for('setup_page') }}">Start a new run</a>
+
+  <div class="run-actions">
+    <button id="cancel" type="button" class="danger">Cancel run</button>
+    <a class="button secondary" href="{{ url_for('setup_page') }}">Set up another repo</a>
+    <p id="background-note" class="muted">This run keeps going if you close this tab. You can find it later under Runs.</p>
   </div>
 </div>
+<script type="application/json" id="page-labels">{{ page_labels|tojson }}</script>
 {% endblock %}
 {% block scripts %}<script src="{{ url_for('static', filename='run.js') }}"></script>{% endblock %}

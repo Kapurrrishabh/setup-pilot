@@ -3,30 +3,40 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <meta name="csrf-token" content="{{ csrf_token }}">
-  <title>SetupPilot{% block title %}{% endblock %}</title>
+  <title>{% block title %}{% endblock %}SetupPilot</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}">
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
 </head>
 <body>
-  <header>
-    <a class="brand" href="{{ url_for('setup_page') }}">SetupPilot</a>
-    <nav>
-      <a href="{{ url_for('setup_page') }}">Set up a repo</a>
-      <a href="{{ url_for('history_page') }}">Runs</a>
-      <a href="{{ url_for('chat_page') }}">Chat</a>
-      <a href="{{ url_for('metrics_page') }}">Metrics</a>
-      <a href="{{ url_for('settings_page') }}">Settings</a>
-    </nav>
-  </header>
-  <main>
-    {% if database_warning %}
-      <div class="banner warn">{{ database_warning }}</div>
-    {% endif %}
-    <div id="error" class="banner error" hidden>
-      <strong id="error-message"></strong>
-      <details><summary>Details</summary><pre id="error-details"></pre></details>
+  <a class="skip-link" href="#main">Skip to main content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="{{ url_for('setup_page') }}">
+        <svg class="brand-mark" viewBox="0 0 16 16" width="24" height="24" aria-hidden="true"><rect width="16" height="16" rx="4" fill="currentColor"/><path d="M8 3.25 12.25 12.5 8 10.25 3.75 12.5Z" fill="#fff"/></svg>
+        SetupPilot
+      </a>
+      <nav aria-label="Main">
+        {% for endpoint, label in [('setup_page', 'Set up a repo'), ('history_page', 'Runs'), ('chat_page', 'Chat'), ('metrics_page', 'Metrics'), ('settings_page', 'Settings')] %}
+          <a href="{{ url_for(endpoint) }}"{% if request.endpoint == endpoint or (endpoint == 'history_page' and request.endpoint == 'run_page') %} aria-current="page"{% endif %}>{{ label }}</a>
+        {% endfor %}
+      </nav>
     </div>
+  </header>
+  <main id="main" tabindex="-1">
+    {% if database_warning %}
+      <div class="banner warn"><p>{{ database_warning }}</p></div>
+    {% endif %}
+    <div id="error" class="banner error" role="alert" tabindex="-1" hidden>
+      <div class="banner-body">
+        <strong id="error-message"></strong>
+        <p id="error-fix" hidden></p>
+        <details id="error-more" hidden><summary>Show details</summary><pre id="error-details" tabindex="0"></pre></details>
+      </div>
+      <button type="button" id="error-close" class="icon-button" aria-label="Dismiss this message">&times;</button>
+    </div>
+    <p id="announce" class="visually-hidden" role="status"></p>
     {% block content %}{% endblock %}
   </main>
   <script src="{{ url_for('static', filename='app.js') }}"></script>

@@ -52,7 +52,28 @@ def check_setup_run(page: Page, base: str, folder: Path) -> None:
     expect(page.locator("#question-edit-error")).to_be_visible(timeout=30_000)
     check("blocked" in page.inner_text("#question-edit-error"), "a dangerous edit is refused")
 
-    approvals = 0
+    page.click("#question-actions button[data-action=edit]")
+    page.locator("#edit-command").press_sequentially(" are")
+    is_still_asking = question.is_visible() and page.locator("#edit-box").is_visible()
+    check(is_still_asking, "keys typed into the edit box do not answer the question")
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(800)  # keys are ignored for a moment after a question shows up
+    first = page.inner_text("#question-command")
+    page.keyboard.press("a")
+    wait_until(page, lambda: report.is_visible() or page.inner_text("#question-command") != first)
+    approved = page.locator("#steps li").filter(has_text=f"Approved: {first}").count()
+    check(approved == 1, f"the A key approves the command on screen ({first})")
+
+    expect(question).to_be_visible(timeout=60_000)
+    page.wait_for_timeout(800)
+    second = page.inner_text("#question-command")
+    page.focus("#repo")
+    page.keyboard.press("r")
+    page.wait_for_timeout(1500)
+    is_unanswered = question.is_visible() and page.inner_text("#question-command") == second
+    check(is_unanswered, "a key pressed outside the question answers nothing")
+
+    approvals = 1
     while approvals < 10:
         wait_until(page, lambda: question.is_visible() or report.is_visible())
         if report.is_visible():
@@ -70,7 +91,9 @@ def check_setup_run(page: Page, base: str, folder: Path) -> None:
         )
     expect(report).to_be_visible(timeout=WAIT_MS)
     title = page.inner_text("#report-title")
-    check(title == "Report: setup verified", f"run ends with '{title}' after {approvals} approvals")
+    check(title == "Setup verified", f"run ends with '{title}' after {approvals} approvals")
+    repo_folder = str(folder.resolve() / "sampleproject")
+    check(repo_folder in page.inner_text("#outcome-message"), f"the outcome names {repo_folder}")
     check(page.locator("#cancel").is_hidden(), "Cancel is hidden once the run is over")
     steps = page.locator("#steps li").count()
     page.reload()
@@ -82,9 +105,12 @@ def check_cancel(page: Page, base: str, folder: Path) -> None:
     start_run(page, base, CANCEL_REPO, folder)
     expect(page.locator("#question")).to_be_visible(timeout=60_000)
     page.click("#cancel")
-    expect(page.locator("#status")).to_have_text("cancelled", timeout=30_000)
+    expect(page.locator("#status")).to_have_attribute("data-status", "cancelled", timeout=30_000)
     check(page.locator("#question").is_hidden(), "cancel hides the open question")
     check(page.locator("#cancel").is_hidden(), "cancel hides the Cancel button")
+    retry, repo_folder = page.locator("#outcome-retry"), str(folder.resolve() / "classnames")
+    is_named = retry.is_visible() and repo_folder in retry.inner_text()
+    check(is_named, f"a cancelled run names the folder to delete: {repo_folder}")
 
 
 def check_pages(page: Page, base: str) -> None:
@@ -96,28 +122,27 @@ def check_pages(page: Page, base: str) -> None:
 
 def check_chat(page: Page, base: str) -> None:
     page.goto(base + "/chat")
-    has_key = page.locator(".banner.warn").count() == 0
+    has_key = page.locator("#ask-notice").count() == 0
     page.fill("#index-form input[name=repo_url]", SETUP_REPO)
     page.click("#index-form button")
-    expect(page.locator(".message.bot").last).to_contain_text("Indexed", timeout=WAIT_MS)
+    expect(page.locator(".message.note").last).to_contain_text("Indexed", timeout=WAIT_MS)
+    if not has_key:
+        is_explained = "Groq key" in page.inner_text("#ask-notice")
+        check(is_explained and page.locator("#ask-form button").is_disabled(), "no key: Ask is off")
+        return
     asked = [
         ("What is the capital of France?", "could not find"),
         ("What license does this project use?", "mit"),
     ]
-    error, answers = page.locator("#error"), page.locator(".message.bot")
-    for number, (question, expected) in enumerate(asked, start=2):
+    problems, answers = page.locator(".message.error"), page.locator(".message.bot")
+    for number, (question, expected) in enumerate(asked, start=1):
         page.fill("#ask-form input[name=question]", question)
         page.click("#ask-form button")
-        wait_until(page, lambda n=number: error.is_visible() or answers.count() >= n, 60_000)
-        if not has_key:
-            is_refused = error.is_visible() and "Groq key" in error.inner_text()
-            check(is_refused, f"no key: {question!r} says a key is needed")
-            continue
-        answer = answers.last.inner_text()
+        wait_until(page, lambda n=number: problems.count() > 0 or answers.count() >= n, 60_000)
+        answer = (problems if problems.count() else answers).last.inner_text()
         check(expected in answer.lower(), f"{question!r} -> {answer.strip()[:120]!r}")
-    if has_key:
-        check(page.locator(".chip").count() > 0, "answers show their source files")
-        check(page.inner_text("#tokens") != "0", "the token counter goes up")
+    check(page.locator(".chip").count() > 0, "answers show their source files")
+    check(page.inner_text("#tokens") != "0", "the token counter goes up")
 
 
 def main() -> None:

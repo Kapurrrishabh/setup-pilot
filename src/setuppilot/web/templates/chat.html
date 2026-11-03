@@ -1,25 +1,56 @@
 {% extends "base.html" %}
-{% block title %} · chat{% endblock %}
+{% block title %}Chat · {% endblock %}
 {% block content %}
-<h1>Ask about a repo</h1>
-{% if llm_problem %}<div class="banner warn">{{ llm_problem }}</div>{% endif %}
-<p class="muted">General questions only: what it does, layout, setup, license, how to contribute. Answers come from the repo's own files.</p>
-<form id="index-form" class="card row">
-  <input name="repo_url" required maxlength="300" placeholder="https://github.com/owner/repo">
-  <button type="submit">Index this repo</button>
-</form>
-<section class="card">
-  <label>Repo
-    <select id="repo">
-      {% for repo in repos %}<option>{{ repo }}</option>{% else %}<option value="">(index a repo first)</option>{% endfor %}
-    </select>
-  </label>
-  <div id="messages" class="messages"></div>
-  <form id="ask-form" class="row">
-    <input name="question" required maxlength="1000" placeholder="What does this repo do?">
-    <button type="submit">Ask</button>
+<div class="page-head">
+  <h1>Ask about a repo</h1>
+  <p class="lead">General questions only: what it does, its layout, how to set it up, its license, how to contribute. Answers come only from the repo's own files.</p>
+</div>
+<section class="card" aria-labelledby="index-title">
+  <h2 id="index-title"><span class="step-number" aria-hidden="true">1</span>Add a repo</h2>
+  <form id="index-form">
+    <label for="index-url">Public GitHub URL</label>
+    <div class="row">
+      <input id="index-url" name="repo_url" required maxlength="300" placeholder="https://github.com/owner/repo" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="index-hint">
+      <button type="submit">Index this repo</button>
+    </div>
+    <p id="index-hint" class="hint">SetupPilot downloads the repo once and reads its docs and config files. The first time can take a minute.</p>
   </form>
-  <p class="muted">Tokens used in this chat: <span id="tokens">0</span></p>
+  <p id="index-error" class="callout bad" role="alert" hidden></p>
+</section>
+<section class="card" aria-labelledby="ask-title">
+  <h2 id="ask-title"><span class="step-number" aria-hidden="true">2</span>Ask a question</h2>
+  {% if llm_problem %}
+  <div id="ask-notice" class="callout warn">
+    <div>
+      <strong>Asking needs a Groq key.</strong>
+      <p>You can still add repos now and ask later. Add GROQ_API_KEY to .env, then restart SetupPilot.</p>
+    </div>
+  </div>
+  {% endif %}
+  <div class="field">
+    <label for="repo">Repo</label>
+    <select id="repo">
+      {% for repo in repos %}<option>{{ repo }}</option>{% else %}<option value="">Add a repo first</option>{% endfor %}
+    </select>
+  </div>
+  <div id="messages" class="messages" role="log" aria-label="Chat messages" tabindex="0"></div>
+  <div id="examples" class="examples" role="group" aria-label="Example questions">
+    <span class="examples-label">Try one:</span>
+    {% for example in ["What does this repo do?", "How do I run it?", "What license does it use?", "How can I contribute?"] %}
+      <button type="button" class="suggestion"{% if llm_problem %} disabled{% endif %}>{{ example }}</button>
+    {% endfor %}
+  </div>
+  <form id="ask-form">
+    <fieldset id="ask-fields"{% if llm_problem %} disabled{% endif %}>
+      <legend class="visually-hidden">Ask a question</legend>
+      <label for="ask-question">Your question</label>
+      <div class="row">
+        <input id="ask-question" name="question" required maxlength="1000" placeholder="What does this repo do?" autocomplete="off">
+        <button type="submit">Ask</button>
+      </div>
+    </fieldset>
+  </form>
+  <p class="muted chat-foot">Tokens used in this chat: <span id="tokens">0</span></p>
 </section>
 {% endblock %}
 {% block scripts %}<script src="{{ url_for('static', filename='chat.js') }}"></script>{% endblock %}
