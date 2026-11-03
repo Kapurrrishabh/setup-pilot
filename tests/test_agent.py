@@ -118,6 +118,24 @@ def test_rejected_command_means_the_setup_is_not_verified(tmp_path):
     assert deps.runs.get_run(outcome.run_id).error_type == "VerifyFailed"
 
 
+def test_rejecting_a_step_says_so_instead_of_claiming_the_install_finished(tmp_path):
+    agent, deps = make_agent(tmp_path, PIP_REPO, runner=FakeRunner())
+    outcome = start(agent, tmp_path)
+    while isinstance(outcome, Waiting):
+        outcome = agent.answer(outcome.run_id, outcome.question_id, {"action": "reject"})
+    assert outcome.error["message"] == "You rejected some steps, so the setup was not checked."
+    assert "- uv venv .venv: rejected by you" in outcome.report
+    assert "exit None" not in outcome.report
+
+
+def test_report_gives_the_exit_code_of_commands_that_ran(tmp_path):
+    agent, _ = make_agent(tmp_path, PIP_REPO, runner=FakeRunner())
+    outcome = start(agent, tmp_path)
+    while isinstance(outcome, Waiting):
+        outcome = agent.answer(outcome.run_id, outcome.question_id, {"action": "approve"})
+    assert "- uv venv .venv: ran, exit code 0" in outcome.report
+
+
 def test_edited_command_is_shown_again_and_runs_as_edited(tmp_path):
     runner = FakeRunner()
     agent, _ = make_agent(tmp_path, PIP_REPO, runner=runner)
@@ -595,7 +613,8 @@ def test_a_command_that_could_not_run_is_recorded_with_its_command(tmp_path):
     outcome = approve_all(agent, start(agent, tmp_path))
     step = next(s for s in deps.runs.list_steps(outcome.run_id) if s.name == "execute")
     assert step.arguments == {"command": "uv venv .venv"} and step.tool == "uv"
-    assert outcome.error["error_type"] == "CommandTimeout" and "failed" in outcome.report
+    assert outcome.error["error_type"] == "CommandTimeout"
+    assert "- uv venv .venv: could not run" in outcome.report
 
 
 def test_risky_compose_settings_are_shown_when_asking_to_start_it(tmp_path):

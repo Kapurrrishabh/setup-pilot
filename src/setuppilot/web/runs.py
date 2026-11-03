@@ -12,6 +12,7 @@ from setuppilot.db.runs import FINISHED_STATUSES, Run, RunStore
 from setuppilot.errors import SetupPilotError
 from setuppilot.guardrails.runner import cancel_group
 from setuppilot.logging_setup import run_id_var
+from setuppilot.tools.clone import repo_folder
 from setuppilot.tools.github_url import parse_github_url
 from setuppilot.web.labels import duration_text, step_tone
 
@@ -102,8 +103,10 @@ class RunManager:
         is_cancelled = run.status == "cancelled"
         steps = self._runs.list_steps(run_id)
         is_cloned = any(s.name == "clone" and s.is_ok for s in steps)
-        # The folder clone_repo made. A clone that worked also proves the URL parses.
-        repo_dir = Path(run.dest_dir) / parse_github_url(run.repo_url).name if is_cloned else None
+        # A clone that worked also proves the URL parses.
+        repo_dir = (
+            repo_folder(parse_github_url(run.repo_url), Path(run.dest_dir)) if is_cloned else None
+        )
         return {
             "run": {k: str(v) if v is not None else None for k, v in asdict(run).items()},
             "steps": [

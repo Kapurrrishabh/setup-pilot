@@ -212,7 +212,11 @@ def _scan(state: RunState) -> tuple[dict, StepNote]:
             details="Tools would run programs from those folders. Delete them from the cloned "
             "folder yourself if you trust the repo, then start a new run.",
         )
-    summary = f"{len(scan.files)} files; {len(scan.skipped_symlinks)} links not followed."
+    links = len(scan.skipped_symlinks)
+    summary = _count(len(scan.files), "file") + (
+        f"; {_count(links, 'link')} not followed" * bool(links)
+    )
+    summary += "."
     return {}, StepNote(summary)
 
 
@@ -236,7 +240,10 @@ def _prerequisites(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
     missing = sorted(
         {c["tool"] for checks in prereqs.values() for c in checks if not c["is_installed"]}
     )
-    return {"prereqs": prereqs}, StepNote(f"Missing tools: {', '.join(missing) or 'none'}.")
+    summary = (
+        f"Missing tools: {', '.join(missing)}." if missing else "All needed tools are installed."
+    )
+    return {"prereqs": prereqs}, StepNote(summary)
 
 
 def _choose_stack(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
@@ -284,7 +291,7 @@ def _choose_stack(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
             "Some tools this repo needs are not installed: "
             + ", ".join(c["tool"] for c in missing)
             + ".",
-            details=" ".join(c["problem"] for c in missing),
+            details="\n".join(f"{c['tool']}: {c['problem']}" for c in missing),
         )
         update = {"chosen": chosen, "notes": notes, "error": _error(error)}
         return update, StepNote(error.message)
@@ -320,7 +327,9 @@ def _plan(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
     notes = list(state.get("notes", [])) + ([skip_reason] if skip_reason else [])
     update = {"plan": plan, "manual_steps": manual_steps, "next_index": 0, "notes": notes}
     pending = sum(p["status"] == "pending" for p in plan)
-    summary = f"{pending} commands to approve; {len(manual_steps)} manual steps."
+    manual = len(manual_steps)
+    summary = f"{_count(pending, 'command')} to approve"
+    summary += f"; the README lists {_count(manual, 'manual step')}." if manual else "."
     return update, StepNote(
         summary, "llm" if note.model else None, None, None, note.tokens, note.model
     )
@@ -428,8 +437,12 @@ def _execute(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
                 details=output.output_tail[-_STATE_OUTPUT_CHARS:],
             )
         )
+    # A negative exit code means a signal stopped it, which here is almost always Cancel.
+    ran_text = f"Ran {item['text']}: exit {output.exit_code}."
+    if output.exit_code < 0:
+        ran_text = f"{item['text']} was stopped before it finished."
     note = StepNote(
-        f"Ran {item['text']}: exit {output.exit_code}.",
+        ran_text,
         command.argv[0],
         arguments,
         output.exit_code,
@@ -469,9 +482,9 @@ def _verify(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
     if skipped:
         checks.append(
             {
-                "name": "Every step was run",
+                "name": "You approved every step",
                 "is_passed": False,
-                "detail": "Skipped: " + "; ".join(skipped),
+                "detail": "Rejected: " + "; ".join(skipped),
             }
         )
     if not checks:
@@ -484,7 +497,15 @@ def _verify(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
         )
     failed = [c for c in checks if not c["is_passed"]]
     update: dict = {"checks": checks, "is_verified": not failed}
-    if failed:
+    if skipped:
+        update["error"] = _error(
+            VerifyFailed(
+                "You rejected some steps, so the setup was not checked.",
+                details=f"Rejected: {'; '.join(skipped)}. Start a new run and approve them to "
+                "finish the setup.",
+            )
+        )
+    elif failed:
         update["error"] = _error(
             VerifyFailed(
                 "The install finished, but the setup could not be confirmed as working.",
@@ -555,11 +576,34 @@ def _verdict(facts: dict) -> str:
     return "Setup NOT verified." + (f" Problem: {facts['problem']}" if facts["problem"] else "")
 
 
+_COMMAND_STATUS_WORDS = {
+    "done": "ran",
+    "rejected": "rejected by you",
+    "failed": "could not run",
+    "pending": "not run",
+    "blocked": "blocked (not allowed)",
+}
+
+
+def _command_outcome(command: dict) -> str:
+    words = _COMMAND_STATUS_WORDS[command["status"]]
+    code = command["exit_code"]
+    if code is None:
+        return words
+    return (
+        f"{words}, but was stopped before it finished" if code < 0 else f"{words}, exit code {code}"
+    )
+
+
+def _count(number: int, word: str) -> str:
+    return f"{number} {word}{'' if number == 1 else 's'}"
+
+
 def _plain_report(facts: dict) -> str:
     """The report without the LLM. It states only facts, so it can always be trusted."""
     lines = [_verdict(facts)]
     for command in facts["commands"]:
-        lines.append(f"- {command['command']}: {command['status']} (exit {command['exit_code']})")
+        lines.append(f"- {command['command']}: {_command_outcome(command)}")
     for check in facts["checks"]:
         lines.append(f"- check '{check['name']}': {'passed' if check['passed'] else 'failed'}")
     if facts["readme_mentions"]:

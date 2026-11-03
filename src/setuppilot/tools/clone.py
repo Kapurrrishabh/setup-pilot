@@ -126,13 +126,17 @@ def _git(args: list[str], config: RepoConfig, label: str, advice: str) -> str:
     return done.stdout
 
 
+def repo_folder(ref: RepoRef, dest_dir: Path) -> Path:
+    return dest_dir / ref.name
+
+
 def clone_repo(ref: RepoRef, dest_dir: Path, config: RepoConfig, repo_check: RepoCheck) -> Path:
     """Clone into dest_dir/<repo name>. Returns the new folder."""
     if not dest_dir.is_dir():
         raise CloneFailed(
             "The destination folder does not exist.", details=f"Create {dest_dir} first."
         )
-    target = dest_dir / ref.name
+    target = repo_folder(ref, dest_dir)
     if target.exists():
         raise CloneFailed(
             "A folder with this repo's name is already there.",
