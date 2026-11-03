@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from setuppilot.errors import CommandBlocked
@@ -12,8 +14,20 @@ def test_docker_mode_mounts_only_the_repo_and_drops_privileges(tmp_path):
     argv = in_docker(validate_command("npm install", guard), "node:22-slim").argv
     assert argv[:3] == ("docker", "run", "--rm")
     assert ("-v", f"{guard.workspace}:/work") == argv[argv.index("-v") : argv.index("-v") + 2]
-    assert "--cap-drop" in argv and "no-new-privileges" in argv
+    assert {
+        ("--user", f"{os.getuid()}:{os.getgid()}"),
+        ("--cap-drop", "ALL"),
+        ("--security-opt", "no-new-privileges"),
+        ("--pids-limit", "512"),
+    } <= set(zip(argv, argv[1:], strict=False))
     assert argv[-3:] == ("node:22-slim", "npm", "install")
+
+
+def test_tool_caches_and_environments_stay_inside_the_repo(tmp_path):
+    (tmp_path / "repo").mkdir()
+    argv = in_docker(validate_command("bundle install", PathGuard(tmp_path / "repo")), "ruby").argv
+    pairs = set(zip(argv, argv[1:], strict=False))
+    assert {("-e", "HOME=/work/.setuppilot-home"), ("-e", "BUNDLE_PATH=vendor/bundle")} <= pairs
 
 
 def test_workspace_program_path_is_mapped_into_the_container(tmp_path):

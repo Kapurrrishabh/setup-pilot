@@ -8,12 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from setuppilot.errors import StackNotFound
+from setuppilot.guardrails.commands import NODE_MANAGERS as _NODE_MANAGERS
 from setuppilot.guardrails.runner import CommandOutput
 from setuppilot.tools.compose import MAX_READ_BYTES, find_compose_files
 from setuppilot.tools.detect import JAVA_WRAPPERS, StackCandidate
 
 _PYTHON_MANAGERS = {"pip", "uv", "poetry", "pipenv", "pdm"}
-_NODE_MANAGERS = {"npm", "yarn", "pnpm", "bun"}
 SUPPORTED_MANAGERS = _PYTHON_MANAGERS | _NODE_MANAGERS | {
     "conda", "go", "cargo", "bundler", "maven", "gradle", "compose",
 }  # fmt: skip

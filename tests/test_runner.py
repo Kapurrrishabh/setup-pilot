@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 import time
+import tracemalloc
 
 import pytest
 
@@ -44,6 +45,17 @@ def test_huge_output_keeps_only_the_end(tmp_path):
     out = run_command(python(tmp_path, code), CONFIG, on_start=no_op)
     assert out.is_output_cut and len(out.output_tail) <= CONFIG.max_output_chars
     assert out.output_tail.rstrip().endswith("line 199999")
+
+
+def test_huge_output_does_not_fill_memory(tmp_path):
+    tracemalloc.start()
+    try:
+        run_command(python(tmp_path, "print('x' * 10_000_000)"), CONFIG, on_start=no_op)
+        peak_bytes = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    # The output is 10 MB; keeping only the end measured about 70 KB at the peak.
+    assert peak_bytes < 1_000_000
 
 
 def test_hanging_command_is_stopped_at_the_time_limit(tmp_path):
@@ -91,9 +103,20 @@ def test_secret_printed_by_a_command_is_hidden(tmp_path, monkeypatch):
 
 
 def test_command_gets_no_input(tmp_path):
-    out = run_command(
-        python(tmp_path, "import sys; print(repr(sys.stdin.read()))"), CONFIG, on_start=no_op
-    )
+    # pytest already points fd 0 at /dev/null, so give it real input that must not get through.
+    read_end, write_end = os.pipe()
+    os.write(write_end, b"typed input")
+    os.close(write_end)
+    saved_stdin = os.dup(0)
+    os.dup2(read_end, 0)
+    try:
+        out = run_command(
+            python(tmp_path, "import sys; print(repr(sys.stdin.read()))"), CONFIG, on_start=no_op
+        )
+    finally:
+        os.dup2(saved_stdin, 0)
+        os.close(saved_stdin)
+        os.close(read_end)
     assert out.output_tail.strip() == "''"
 
 
@@ -106,6 +129,21 @@ def test_missing_program_is_a_prerequisite_error(tmp_path):
 def test_child_env_turns_off_prompts():
     env = child_env()
     assert (env["GIT_TERMINAL_PROMPT"], env["PIP_NO_INPUT"]) == ("0", "1")
+
+
+def test_child_env_keeps_project_environments_in_the_repo():
+    in_repo = {
+        "POETRY_VIRTUALENVS_IN_PROJECT": "true",
+        "PIPENV_VENV_IN_PROJECT": "1",
+        "BUNDLE_PATH": "vendor/bundle",
+    }
+    assert child_env().items() >= in_repo.items()
+
+
+@pytest.mark.parametrize("name", ["DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG"])
+def test_docker_engine_setting_reaches_the_command(monkeypatch, name):
+    monkeypatch.setenv(name, "from-your-shell")
+    assert child_env().get(name) == "from-your-shell"
 
 
 @pytest.mark.parametrize(
@@ -149,6 +187,19 @@ def test_program_that_is_not_executable_says_to_chmod(tmp_path):
     with pytest.raises(PrereqMissing) as error:
         run_command(command, CONFIG, on_start=no_op)
     assert "chmod +x" in error.value.details
+
+
+@pytest.mark.parametrize(
+    "script", [b"#!/bin/sh\r\necho hi\r\n", b"echo hi\n"], ids=["windows-line-endings", "no-#!"]
+)
+def test_repo_script_that_will_not_start_says_to_check_its_first_line(tmp_path, script):
+    wrapper = tmp_path / "gradlew"
+    wrapper.write_bytes(script)
+    wrapper.chmod(0o755)
+    command = SafeCommand((str(wrapper), "dependencies"), tmp_path, "./gradlew dependencies")
+    with pytest.raises(PrereqMissing) as error:
+        run_command(command, CONFIG, on_start=no_op)
+    assert "line endings" in error.value.details
 
 
 def test_background_process_that_holds_the_output_is_reported(tmp_path):

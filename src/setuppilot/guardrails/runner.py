@@ -28,6 +28,8 @@ _PASSED_ENV = {
     "HOME", "USER", "LOGNAME", "SHELL", "LANG", "TERM", "TMPDIR", "TZ",
     "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
     "SSL_CERT_FILE", "SSL_CERT_DIR", "JAVA_HOME", "GOROOT", "RUSTUP_HOME", "CARGO_HOME",
+    # So docker commands reach the same engine as the pre-check. HOME already exposes ~/.docker.
+    "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG",
     *GO_DOWNLOAD_ENV,
 }  # fmt: skip
 # Keep each project's environment inside the repo folder, not in your home folder.
@@ -110,7 +112,14 @@ def _start(command: SafeCommand) -> subprocess.Popen:
             f"{command.argv[0]} cannot be run: it is not marked as a program.",
             details=f"Run `chmod +x {command.argv[0]}` yourself if you trust it, then try again.",
         ) from error
-    except FileNotFoundError as error:
+    except OSError as error:
+        # A path means a file from the repo, so "not on PATH" would send you the wrong way.
+        if not isinstance(error, FileNotFoundError) or "/" in command.argv[0]:
+            raise PrereqMissing(
+                f"{command.argv[0]} could not be started: {error.strerror}.",
+                details="If the file is there, check that its first line starts with #! and that "
+                "it uses Unix (LF) line endings.",
+            ) from error
         raise PrereqMissing(
             f"{command.argv[0]} is not installed or not on PATH.",
             details=f"Could not start {command.text!r}: {error.strerror}.",

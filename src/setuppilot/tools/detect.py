@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from setuppilot.guardrails.commands import NODE_MANAGERS as _NODE_MANAGERS
 from setuppilot.tools.compose import COMPOSE_NAMES, MAX_READ_BYTES
 from setuppilot.tools.scan import RepoScan
 
@@ -31,7 +32,6 @@ _LOCKS: dict[Stack, tuple[tuple[str, str], ...]] = {
 }
 _PYTHON_MANIFESTS = ("pyproject.toml", "setup.py", "setup.cfg", "Pipfile")
 _CONDA_FILES = ("environment.yml", "environment.yaml")
-_NODE_MANAGERS = ("npm", "yarn", "pnpm", "bun")
 # A repo's own build script for Java; it replaces an installed Maven or Gradle.
 JAVA_WRAPPERS = {"maven": "mvnw", "gradle": "gradlew"}
 _GRADLE_FILES = ("build.gradle.kts", "build.gradle", "settings.gradle.kts", "settings.gradle")

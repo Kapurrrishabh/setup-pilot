@@ -1,7 +1,7 @@
 import pytest
 
 from setuppilot.errors import CommandBlocked
-from setuppilot.guardrails.commands import validate_command
+from setuppilot.guardrails.commands import NODE_MANAGERS, validate_command
 from setuppilot.guardrails.paths import PathGuard
 
 
@@ -32,6 +32,7 @@ SAFE = [
     "go build ./...",
     "cargo fetch",
     "cargo build",
+    "cargo build -p config",
     "bundle install",
     "mvn dependency:resolve",
     "./mvnw dependency:go-offline",
@@ -79,6 +80,7 @@ UNSAFE = [
     "uv pip install --system requests",
     "uv pip install --break-system-packages requests",
     ".venv/bin/pip install --user requests",
+    "uv pip install --user requests",
     "make install",
     "node evil.js",
     "./install.sh",
@@ -86,6 +88,7 @@ UNSAFE = [
     "docker compose -f /etc/compose.yml up",
     "docker compose exec web sh",
     "npm install ../evil",
+    "uv pip install ..",
     "npm install /tmp/evil",
     "npm install --prefix=/usr/local",
     "go build -o/usr/local/bin/x ./...",
@@ -107,21 +110,27 @@ UNSAFE = [
     "npm install --global=true evil",
     "npm install --location global evil",
     "uv pip install -qt/abs evil",
+    "poetry install -C..",
+    "poetry install -qC..",
     "npm install file:/etc/evil",
     "uv pip install file:../evil",
     "mvn compile exec:exec",
+    "./mvnw compile exec:exec",
     "./gradlew dependencies runEvil",
     "go build -toolexec=/bin/evil ./...",
     "go build -toolexec /bin/evil ./...",
+    "go build --toolexec=./x.sh ./...",
+    "go build -ldflags=-extld=./x.sh ./...",
     "cargo build --config build.rustc-wrapper=evil",
     "npm install\nnpm ci",
     "npm install foo;bar",
     "npm install a\x00b",
+    "npm install a\rb",
     "docker compose up",
     "docker compose run web sh",
     "../../usr/bin/npm install",
     "/usr/bin/npm install",
-    "npm " + "a" * 1000,
+    "npm install " + "a" * 990,
 ]
 
 
@@ -166,3 +175,10 @@ def test_never_allowed_programs_say_so(guard):
     with pytest.raises(CommandBlocked) as error:
         validate_command("sudo npm install", guard)
     assert "never allowed" in error.value.details
+
+
+@pytest.mark.parametrize("manager", sorted(NODE_MANAGERS))
+def test_glued_global_flag_is_blocked_for_every_node_manager(guard, manager):
+    with pytest.raises(CommandBlocked) as error:
+        validate_command(f"{manager} install -gq evil", guard)
+    assert "installs outside" in error.value.details

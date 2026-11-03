@@ -54,8 +54,13 @@ _EVERY_WORD_CHECKED = {"mvn", "mvnw", "gradle", "gradlew"}
 _NEVER = {"sudo", "su", "doas", "rm", "curl", "wget", "sh", "bash", "zsh", "eval", "chmod", "dd"}
 # Flags that install outside the project, or run another program of the caller's choice.
 _BLOCKED_FLAGS = {"--system", "--break-system-packages", "--user", "-g", "--global", "--location"}
-_TOOL_BLOCKED_FLAGS = {"go": {"-toolexec", "-exec"}, "cargo": {"--config", "-Z"}}
-_NODE_MANAGERS = {"npm", "yarn", "pnpm", "bun"}
+# Matched without dashes, because go reads -toolexec and --toolexec the same. -ldflags is refused
+# whole: -extld inside it picks the program that links.
+_TOOL_BLOCKED_FLAGS = {
+    "go": {"toolexec", "exec", "ldflags", "gccgoflags"},
+    "cargo": {"config", "Z"},
+}
+NODE_MANAGERS = {"npm", "yarn", "pnpm", "bun"}
 _SHELL_PARTS = (";", "|", "&", "`", "$(", "\n", "\r", "\x00")
 # `python -c` may only import a module: that is the verify step's import test.
 _IMPORT_ONLY = re.compile(r"import [A-Za-z_]\w*(\.[A-Za-z_]\w*)*", re.ASCII)
@@ -126,10 +131,10 @@ def _program(first: str, guard: PathGuard, text: str) -> tuple[str, Rule]:
 def _check_flag(arg: str, program: str, text: str) -> None:
     flag = arg.split("=", 1)[0]
     if flag in _BLOCKED_FLAGS or (
-        program in _NODE_MANAGERS and re.fullmatch(r"-[A-Za-z]*g[A-Za-z]*", arg)
+        program in NODE_MANAGERS and re.fullmatch(r"-[A-Za-z]*g[A-Za-z]*", arg)
     ):
         raise _blocked(text, f"{arg!r} installs outside this project.")
-    if flag in _TOOL_BLOCKED_FLAGS.get(program, set()):
+    if arg.startswith("-") and flag.lstrip("-") in _TOOL_BLOCKED_FLAGS.get(program, set()):
         raise _blocked(text, f"{arg!r} could make {program} run another program.")
 
 
@@ -137,7 +142,7 @@ def _check_arg(arg: str, guard: PathGuard, text: str) -> None:
     if arg.startswith((">", "<", "2>")):
         raise _blocked(text, f"{arg!r} redirects output. Run the command without it.")
     is_glued_short_flag = arg.startswith("-") and not arg.startswith("--") and len(arg) > 2
-    if is_glued_short_flag and "/" in arg and "=" not in arg:
+    if is_glued_short_flag and "=" not in arg and any(part in arg for part in ("/", "..", "~")):
         raise _blocked(text, f"{arg!r}: put a space between a short flag and a path.")
     values = [arg]
     if "=" in arg:
