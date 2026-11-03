@@ -20,5 +20,6 @@ logs/
 coverage.xml
 htmlcov/
 
-# Repos cloned by the app
+# Repos cloned by the app, and test.sh results
 workspace/
+test-results/
