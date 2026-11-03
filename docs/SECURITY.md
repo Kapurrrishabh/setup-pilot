@@ -20,9 +20,13 @@ the newest code on `main` gets fixes.
   `npm install`, `uv pip install`, `docker compose up -d`). No shell: commands are split into
   arguments, and chaining, pipes, redirects, `sudo`, `rm`, `curl`, `sh` and unknown programs are
   refused. Flags that install outside the project (`--global`, `--system`, `--user`) are refused.
-  For Maven and Gradle every goal is checked, not just the first.
+  Flags that make a build tool run another program are refused in either dash spelling: go's
+  `-toolexec`, `-exec`, `-ldflags` and `-gccgoflags`, and cargo's `--config` and `-Z`. For Maven
+  and Gradle every goal is checked, not just the first.
 - **Everything stays in the repo folder.** Every path is resolved and must stay inside the cloned
-  repo: `..`, `~`, absolute paths outside it and symlinks that point out are refused. A repo that
+  repo: `..`, `~`, absolute paths outside it and symlinks that point out are refused, also
+  inside folders that are not scanned (like `build/`). A short flag glued to a path (`-C..`,
+  `-t/abs`) is refused too; put a space between the flag and the path. A repo that
   ships its own `.venv`, `venv` or `node_modules`, or links that point outside, is not set up.
   Python packages go only into the repo's `.venv` (uv is given `--python .venv`, so a parent
   folder's venv or the repo's own uv settings cannot redirect them).
@@ -31,7 +35,7 @@ the newest code on `main` gets fixes.
   goes through the allowlist and your approval like any other. The "verified / NOT verified" line
   always comes from the code's own checks, never from the AI.
 - **No secrets for install scripts.** Commands get only a short list of safe environment
-  variables (PATH, HOME, proxy settings, and so on). API keys, the database URL, cloud tokens,
+  variables (PATH, HOME, proxy settings, where your Docker engine is, and so on). API keys, the database URL, cloud tokens,
   `SSH_AUTH_SOCK` and `VIRTUAL_ENV` are left out. Secrets are hidden in logs, saved steps and
   command output.
 - **Time and size limits.** Every command has a time limit (the whole process group is stopped,
@@ -48,8 +52,10 @@ the newest code on `main` gets fixes.
 - **Database.** Only the app talks to Supabase, as the table owner. Row level security is on for
   every table, with no policies, so Supabase's public API keys can read nothing.
 - **Docker Compose warnings.** Compose files are checked for settings that give a container power
-  over your machine (privileged mode, host network, mounts outside the repo, the Docker socket,
-  ports open to your whole network) and these are shown before you approve.
+  over your machine (privileged mode, host network, mounts outside the repo, including secret and
+  config files and bind-style named volumes, build folders outside the repo, the Docker socket,
+  ports open to your whole network) and these are shown before you approve. A compose file whose
+  YAML aliases would make it bigger than 1 MB when written out is not read, and says so.
 
 ## What it cannot stop
 

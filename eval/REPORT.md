@@ -14,6 +14,13 @@ approves SetupPilot's own install and check commands and rejects README suggesti
 is the same. "Verified" means the real checks passed (for example `uv pip check` and an import
 test, `npm ls`, `cargo build`, `bundle check`, `mvn compile`), not just exit codes.
 
+`uv run setuppilot eval-setup --docker` runs the same set in Docker mode. Its scores go to
+`setup-docker.jsonl` and `setup-docker-<time>.md`, so a Docker run never carries on from native
+scores. The evaluation does not stop at a Groq limit: the agent carries on without the LLM (no
+README tips, no AI summary) and the repo is still saved as done, so after a limit the Tokens and
+Approvals columns under-count. Stack, install and verified do not use the LLM, so they stay right.
+To measure tokens again, delete `eval/results/setup.jsonl` and rerun once the limit has reset.
+
 | Run | What changed | Stack right | Install command right | Verified |
 |---|---|---|---|---|
 | 1 | First run | 11/15 (73%) | 11/15 (73%) | 11/15 (73%) |
@@ -86,5 +93,9 @@ questions, short questions that share few words with the README.
   from an answerable one (no cutoff separated the 5 unanswerable questions), so this depends on
   the LLM saying `found: false`. Run `uv run setuppilot eval-chat` with a Groq key. Every answer
   is cached, so `--mode replay` repeats it for free, and a stopped run carries on when re-run.
+  Scores are saved per question in `eval/results/chat-<mode>.jsonl`. After you change chat
+  settings, delete that file first, or the old scores are reused (the run prints how many). After
+  a change to chunk or embedding settings, also re-index each repo with
+  `uv run setuppilot index <url>`, because the evaluation does not re-index a repo it already has.
 - **LLM calls per setup run** (target 3 to 6): with a key, each run makes 2 calls (README tips and
   the summary), plus retries if Groq is busy.

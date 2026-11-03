@@ -84,7 +84,8 @@ chat:
   max_chunks_per_repo: 1500
   top_k: 5
   # Measured on eval/chat_questions.yaml (2026-11-02): with at most 2 chunks per file, the right
-  # file is found for 21/25 questions at 0.2, but only 14/25 at 0.3. Off-topic questions score
+  # file is found for 21/25 questions at 0.2 (20/25 after the file-selection fix in eval/REPORT.md),
+  # but only 14/25 at 0.3. Off-topic questions score
   # about 0.16, so 0.2 still skips the LLM for them.
   max_chunks_per_file: 2
   min_similarity: 0.2

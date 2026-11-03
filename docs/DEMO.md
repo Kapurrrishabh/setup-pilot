@@ -21,6 +21,6 @@ Before: run `uv sync`, put `GROQ_API_KEY` and `SUPABASE_DB_URL` in `.env`, and r
    config" (politely refused), then "How many downloads does it have?" ("I could not find this
    in the repo").
 6. **Numbers (30 s).** Runs and Metrics pages, then `eval/REPORT.md`: 15/15 stacks detected,
-   15/15 repos verified, chatbot search finds the right file for 80% of questions.
+   15/15 repos verified, chatbot search finds the right file for 20 of the 25 answerable questions (80%).
 
 If something fails live, say so: the report tells you what failed and why, which is the point.
