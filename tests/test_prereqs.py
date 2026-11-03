@@ -71,6 +71,12 @@ def test_pinned_version_that_differs_from_the_installed_one_is_flagged():
     assert "asks for ruby 3.3.0" in checks[0].problem
 
 
+def test_go_newer_than_the_go_mod_minimum_is_not_flagged():
+    probe = FakeProbe({"go": "go version go1.25.1 darwin/arm64"})
+    (go,) = check_prerequisites(candidate("go", "go", ("go.mod",), "1.22"), probe)
+    assert go.problem is None
+
+
 def test_version_range_is_not_compared():
     (node, _) = check_prerequisites(
         candidate("node", "npm", hint=">=18"), FakeProbe({"node": "v16.0.0", "npm": "8"})

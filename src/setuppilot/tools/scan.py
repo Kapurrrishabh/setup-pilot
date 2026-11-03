@@ -58,7 +58,10 @@ def scan_repo(root: Path) -> RepoScan:
         for name in dirs + names:
             if (here / name).is_symlink():
                 symlinks.append((here / name).relative_to(root).as_posix())
-        dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+        # Skipped folders are still searched for links: git checks out a link in build/ too.
+        dirs[:] = sorted(d for d in dirs if d != ".git")
+        if not SKIP_DIRS.isdisjoint(here.relative_to(root).parts):
+            continue
         files += [
             (here / n).relative_to(root).as_posix()
             for n in sorted(names)

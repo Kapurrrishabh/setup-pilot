@@ -78,6 +78,10 @@ def test_repo_mounts_and_named_or_anonymous_volumes_are_not_flagged(tmp_path, vo
     assert warnings_for(tmp_path, f"    volumes: ['{volume}']\n") == ()
 
 
+def test_volume_entry_that_is_neither_text_nor_a_map_is_flagged(tmp_path):
+    assert "could not be understood" in warnings_for(tmp_path, "    volumes: [[a, b]]\n")[0]
+
+
 def test_parent_folder_mount_from_a_compose_file_in_a_subfolder_stays_in_the_repo(tmp_path):
     files = {"docker/compose.yml": "services:\n  app:\n    volumes: ['..:/app']\n"}
     (found,) = compose_files(tmp_path, files)
@@ -114,25 +118,97 @@ def test_include_of_unchecked_files_is_flagged(tmp_path):
     assert "include/extends" in found.warnings[0]
 
 
-def test_yaml_alias_bomb_is_read_quickly(tmp_path):
-    levels = ["x0: &x0 [a, a, a, a, a, a, a, a, a]"]
-    levels += [f"x{i}: &x{i} [" + ", ".join([f"*x{i - 1}"] * 9) + "]" for i in range(1, 9)]
-    bomb = "\n".join(levels) + "\nservices:\n  app:\n    volumes: [*x8]\n"
-    start = time.perf_counter()
-    (found,) = compose_files(tmp_path, {"compose.yaml": bomb})
-    assert time.perf_counter() - start < 2
-    assert "could not be understood" in found.warnings[0]
+NESTED_ALIASES = "\n".join(
+    ["x0: &x0 [a, a, a, a, a, a, a, a, a]"]
+    + [f"x{i}: &x{i} [" + ", ".join([f"*x{i - 1}"] * 9) + "]" for i in range(1, 9)]
+)
+SHARED_SERVICES = "".join(
+    ["x: &v '/x:/y'\nservices:\n  a: &svc\n    volumes: [", ", ".join(["*v"] * 2000), "]\n"]
+    + [f"  s{i}: *svc\n" for i in range(1000)]
+)
 
 
 @pytest.mark.parametrize(
-    "port", ["'8000:8000'", "'0.0.0.0:8000:8000'", "8000", "{target: 80, published: 8080}"]
+    "bomb",
+    [
+        NESTED_ALIASES + "\nservices:\n  app:\n    volumes: [*x8]\n",
+        NESTED_ALIASES + "\nservices:\n  app:\n    security_opt: [*x8]\n",
+        NESTED_ALIASES + "\nservices:\n  app:\n    ports: [{published: 8080, x: *x8}]\n",
+        SHARED_SERVICES,
+    ],
+    ids=["volumes", "security_opt", "port", "shared-services"],
+)
+def test_yaml_alias_bomb_is_read_quickly(tmp_path, bomb):
+    start = time.perf_counter()
+    (found,) = compose_files(tmp_path, {"compose.yaml": bomb})
+    assert time.perf_counter() - start < 2
+    assert found.warnings == ("Its YAML aliases make it too big to read; skipped.",)
+
+
+def test_settings_merged_in_from_a_yaml_anchor_are_still_checked(tmp_path):
+    compose = "x-common: &common {privileged: true}\nservices:\n  app: {<<: *common, image: x}\n"
+    (found,) = compose_files(tmp_path, {"compose.yaml": compose})
+    assert "privileged" in found.warnings[0]
+
+
+def test_number_too_long_for_python_becomes_a_warning(tmp_path):
+    warnings = warnings_for(tmp_path, "    mem_limit: " + "1" * 5000 + "\n")
+    assert warnings == ("Could not read it: ValueError.",)
+
+
+IMAGE_ONLY = "services: {app: {image: x}}\n"
+
+
+@pytest.mark.parametrize(
+    ("compose", "source"),
+    [
+        (IMAGE_ONLY + "secrets: {creds: {file: ~/.aws/credentials}}", "~/.aws/credentials"),
+        (IMAGE_ONLY + "configs: {hosts: {file: ../../etc/hosts}}", "../../etc/hosts"),
+        (IMAGE_ONLY + "volumes: {home: {driver_opts: {o: bind, device: /Users}}}", "/Users"),
+        ("services: {app: {build: ../..}}", "../.."),
+        ("services: {app: {build: {context: ~/.ssh}}}", "~/.ssh"),
+        ("services: {app: {build: {additional_contexts: {keys: ~/.ssh}}}}", "~/.ssh"),
+        ("services: {app: {build: {additional_contexts: ['keys=~/.ssh']}}}", "~/.ssh"),
+    ],
+    ids=["secret", "config", "volume-device", "build", "context", "extra-map", "extra-list"],
+)
+def test_host_paths_reached_through_secrets_configs_volumes_or_build_are_flagged(
+    tmp_path, compose, source
+):
+    (found,) = compose_files(tmp_path, {"compose.yaml": compose})
+    (warning,) = found.warnings
+    assert source in warning
+
+
+def test_secrets_volumes_and_build_folders_inside_the_repo_are_not_flagged(tmp_path):
+    compose = (
+        "services: {app: {build: {context: ., additional_contexts: {assets: ./assets}}}}\n"
+        "secrets: {key: {file: ./secret.txt}}\nvolumes: {data: {}}\n"
+    )
+    (found,) = compose_files(tmp_path, {"compose.yaml": compose})
+    assert found.warnings == ()
+
+
+@pytest.mark.parametrize(
+    "port",
+    ["'8000:8000'", "'0.0.0.0:8000:8000'", "8000", "{target: 80, published: 8080}", "{target: 80}"],
 )
 def test_ports_open_to_the_whole_network_are_flagged(tmp_path, port):
     assert any("whole network" in w for w in warnings_for(tmp_path, f"    ports: [{port}]\n"))
 
 
+def test_long_form_port_warning_names_only_the_port(tmp_path):
+    (warning,) = warnings_for(tmp_path, "    ports: [{target: 80, published: 8080, x: [a, b]}]\n")
+    assert warning.startswith("app: port 8080 is open")
+
+
 @pytest.mark.parametrize(
-    "port", ["'127.0.0.1:8000:8000'", "{target: 80, published: 8080, host_ip: 127.0.0.1}"]
+    "port",
+    [
+        "'127.0.0.1:8000:8000'",
+        "{target: 80, published: 8080, host_ip: 127.0.0.1}",
+        "{target: 80, host_ip: 127.0.0.1}",
+    ],
 )
 def test_ports_kept_on_this_machine_are_not_flagged(tmp_path, port):
     assert warnings_for(tmp_path, f"    ports: [{port}]\n") == ()

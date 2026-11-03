@@ -558,3 +558,11 @@ def test_unknown_answer_is_refused_not_taken_as_reject(tmp_path):
     first = start(agent, tmp_path)
     with pytest.raises(QuestionChanged, match="approve, reject or edit"):
         agent.answer(first.run_id, first.question_id, {"action": "maybe"})
+
+
+@pytest.mark.parametrize("name", ["package.json", "pyproject.toml"])
+def test_manifest_with_a_too_long_number_still_ends_with_a_report(tmp_path, name):
+    text = '{"n": ' + "1" * 5000 + "}" if name == "package.json" else "n = " + "1" * 5000
+    agent, _ = make_agent(tmp_path, {name: text})
+    outcome = approve_all(agent, start(agent, tmp_path))
+    assert isinstance(outcome, Finished) and outcome.report

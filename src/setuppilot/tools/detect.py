@@ -270,14 +270,14 @@ class _ManifestReader:
     def toml(self, name: str) -> dict:
         try:
             return tomllib.loads(self.text(name) or "")
-        except (tomllib.TOMLDecodeError, RecursionError) as error:
+        except (ValueError, RecursionError) as error:
             self.note(f"{name} is not valid TOML: {type(error).__name__}")
             return {}
 
     def json(self, name: str) -> dict:
         try:
             data = json.loads(self.text(name) or "{}")
-        except (json.JSONDecodeError, RecursionError) as error:
+        except (ValueError, RecursionError) as error:
             self.note(f"{name} is not valid JSON: {type(error).__name__}")
             return {}
         return data if isinstance(data, dict) else {}

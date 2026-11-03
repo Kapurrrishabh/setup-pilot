@@ -97,7 +97,7 @@ def is_installable_project(repo: Path) -> bool:
         return False
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8-sig"))
-    except (tomllib.TOMLDecodeError, UnicodeDecodeError, RecursionError):
+    except (ValueError, RecursionError):
         return False
     return "project" in data or "build-system" in data
 
@@ -208,7 +208,7 @@ def _has_node_dependencies(repo: Path) -> bool:
         return True
     try:
         package = json.loads(path.read_text(encoding="utf-8-sig"))
-    except (json.JSONDecodeError, UnicodeDecodeError, RecursionError):
+    except (ValueError, RecursionError):
         return True
     return isinstance(package, dict) and any(
         package.get(key) for key in ("dependencies", "devDependencies", "optionalDependencies")

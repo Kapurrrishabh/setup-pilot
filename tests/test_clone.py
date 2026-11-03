@@ -46,10 +46,10 @@ def test_clone_makes_a_folder_named_after_the_repo(tmp_path, remote):
     assert (target / "README.md").read_text() == "# demo\n"
 
 
-def test_repo_bigger_than_the_limit_is_refused_before_its_files_are_written(tmp_path, remote):
+def test_repo_bigger_than_the_limit_is_refused_before_its_files_are_checked_out(tmp_path, remote):
     (remote / "big.bin").write_bytes(b"0" * 2_000_000)
     commit_all(remote)
-    with pytest.raises(CloneFailed, match="files were not downloaded") as error:
+    with pytest.raises(CloneFailed, match="files were not checked out") as error:
         clone_repo(REF, tmp_path, CONFIG, repo_check=no_check)
     assert "1.9 MB" in error.value.details
     assert not (tmp_path / "demo" / "big.bin").exists()
@@ -92,6 +92,23 @@ def test_failed_git_clone_reports_git_output(tmp_path, monkeypatch):
     with pytest.raises(CloneFailed) as error:
         git_clone("https://github.com/someone/demo.git", tmp_path / "out", CONFIG)
     assert "exited with 128: fatal: repository not found" in error.value.details
+
+
+def test_failed_checkout_does_not_blame_the_url(tmp_path, monkeypatch):
+    fake_executable(tmp_path / "bin", "git", 'case "$*" in *"checkout -q"*) exit 1;; esac')
+    monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+    with pytest.raises(CloneFailed, match="^git checkout failed. Check that the disk"):
+        git_clone("https://github.com/someone/demo.git", tmp_path / "out", CONFIG)
+
+
+def test_empty_repo_is_called_empty_not_a_bad_url(tmp_path, monkeypatch):
+    empty = tmp_path / "empty"
+    subprocess.run(["git", "init", "-q", str(empty)], check=True)
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "protocol.file.allow")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "always")
+    with pytest.raises(CloneFailed, match="may be empty"):
+        git_clone(empty.as_uri(), tmp_path / "out", CONFIG)
 
 
 def test_hanging_clone_is_stopped(tmp_path, monkeypatch):

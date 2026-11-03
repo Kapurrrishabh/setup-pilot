@@ -1,4 +1,4 @@
-"""Shallow clone of a GitHub repo, refused before any file is written if it is too big."""
+"""Shallow clone of a GitHub repo, refused before its files are checked out if it is too big."""
 
 import logging
 import os
@@ -68,23 +68,32 @@ def git_clone(url: str, target: Path, config: RepoConfig) -> None:
         ],
         config,
         f"git clone {url}",
+        "Check the URL and your internet connection.",
     )
     listing = _git(
-        ["-C", str(target), "ls-tree", "-r", "-l", "--full-tree", "HEAD"], config, "git ls-tree"
+        ["-C", str(target), "ls-tree", "-r", "-l", "--full-tree", "HEAD"],
+        config,
+        "git ls-tree",
+        "The repo may be empty (no commits yet).",
     )
     size = sum(int(line.split()[3]) for line in listing.splitlines() if line.split()[3].isdigit())
     limit = config.max_size_mb * 1024 * 1024
     if size > limit:
         raise CloneFailed(
             f"This repo is bigger than the {config.max_size_mb} MB limit, so its files were not "
-            "downloaded.",
+            "checked out.",
             details=f"Its files add up to {size / 2**20:.1f} MB. Only git data is left in "
             f"{target}; delete it, or raise repo.max_size_mb in config.yaml.",
         )
-    _git(["-C", str(target), "checkout", "-q"], config, "git checkout")
+    _git(
+        ["-C", str(target), "checkout", "-q"],
+        config,
+        "git checkout",
+        "Check that the disk has free space; the details show what git said.",
+    )
 
 
-def _git(args: list[str], config: RepoConfig, label: str) -> str:
+def _git(args: list[str], config: RepoConfig, label: str, advice: str) -> str:
     git = shutil.which("git")
     if git is None:
         raise PrereqMissing(
@@ -111,7 +120,7 @@ def _git(args: list[str], config: RepoConfig, label: str) -> str:
         ) from error
     if done.returncode != 0:
         raise CloneFailed(
-            "git clone failed. Check the URL and your internet connection.",
+            f"{label} failed. {advice}",
             details=f"{label} exited with {done.returncode}: {done.stderr[-_STDERR_TAIL:]}",
         )
     return done.stdout

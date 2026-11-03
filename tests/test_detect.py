@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from setuppilot.tools.detect import detect_stacks
 from setuppilot.tools.scan import scan_repo
 from tests.fakes import make_repo
@@ -94,6 +96,14 @@ def test_broken_package_json_becomes_a_note_not_a_crash(tmp_path):
     result = detect(tmp_path, {"package.json": "{not json"})
     assert found(result) == [("node", "npm")]
     assert "not valid JSON" in result.notes[0]
+
+
+@pytest.mark.parametrize(
+    ("name", "text"),
+    [("package.json", '{"n": ' + "1" * 5000 + "}"), ("pyproject.toml", "n = " + "1" * 5000)],
+)
+def test_number_too_long_for_python_becomes_a_note_not_a_crash(tmp_path, name, text):
+    assert "is not valid" in detect(tmp_path, {name: text}).notes[0]
 
 
 def test_go_version_comes_from_go_mod(tmp_path):

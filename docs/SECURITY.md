@@ -36,7 +36,9 @@ the newest code on `main` gets fixes.
   command output.
 - **Time and size limits.** Every command has a time limit (the whole process group is stopped,
   also on Ctrl+C or Cancel) and only the end of its output is kept. Clones are shallow, and a repo
-  whose files add up to more than the size limit is refused before any file is written.
+  whose files add up to more than the size limit is refused before its files are checked out. Its
+  compressed git data is still downloaded first (only the clone time limit caps that) and is left
+  in the folder for you to delete.
 - **Only https://github.com/owner/repo.** Other hosts, other schemes, extra paths and look-alike
   letters are refused. git runs with only https allowed and no saved passwords.
 - **Local web app only.** It listens on 127.0.0.1 and refuses any other address in config.yaml.

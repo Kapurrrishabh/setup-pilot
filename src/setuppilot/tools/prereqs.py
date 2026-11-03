@@ -79,8 +79,9 @@ _TOOLS_FOR_MANAGER: dict[str, tuple[str, ...]] = {
     "compose": ("docker", "docker compose", "docker engine"),
     "dockerfile": ("docker", "docker engine"),
 }
-# The tool whose version should match a pinned version hint (uv picks Python by itself).
-_PINNED_TOOL = {"node": "node", "go": "go", "rust": "cargo", "ruby": "ruby"}
+# The tool whose version should match a pinned version hint. uv picks Python by itself, and
+# go.mod's go line is only a minimum, so any newer Go builds the module.
+_PINNED_TOOL = {"node": "node", "rust": "cargo", "ruby": "ruby"}
 _VERSION_TIMEOUT_SECONDS = 10
 _EXACT_PIN = re.compile(r"v?(\d+)\.(\d+)(\.\d+)?")
 

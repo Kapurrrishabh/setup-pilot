@@ -44,14 +44,17 @@ def _read_compose(root, relative: str) -> ComposeFile:
     if path.stat().st_size > MAX_READ_BYTES:
         return ComposeFile(relative, (), ("File is too big to read; skipped.",))
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8-sig"))
-    except (yaml.YAMLError, UnicodeDecodeError, RecursionError) as error:
+        data = _load_yaml(path.read_text(encoding="utf-8-sig"))
+    except (yaml.YAMLError, ValueError, RecursionError) as error:
         return ComposeFile(relative, (), (f"Could not read it: {type(error).__name__}.",))
+    if data is _TOO_BIG:
+        return ComposeFile(relative, (), ("Its YAML aliases make it too big to read; skipped.",))
     services = data.get("services") if isinstance(data, dict) else None
     if not isinstance(services, dict):
         return ComposeFile(relative, (), ("No 'services' section found.",))
     folder = PurePosixPath(relative).parent
     warnings = [w for name, svc in services.items() for w in _risky(str(name), svc, folder)]
+    warnings += _host_files(data, folder)
     if {"include", "extends"} & set(data) or any(
         isinstance(s, dict) and "extends" in s for s in services.values()
     ):
@@ -60,6 +63,49 @@ def _read_compose(root, relative: str) -> ComposeFile:
         str(name) for name, s in services.items() if not (isinstance(s, dict) and s.get("profiles"))
     )
     return ComposeFile(relative, started, tuple(warnings))
+
+
+_TOO_BIG = object()
+
+
+def _load_yaml(text: str) -> Any:
+    """yaml.safe_load, or _TOO_BIG when the file, with its aliases written out, passes
+    MAX_READ_BYTES. A few hundred bytes of aliases can stand for gigabytes, and the checks visit
+    every use."""
+    loader = yaml.SafeLoader(text)
+    try:
+        node = loader.get_single_node()
+        if node is not None and _expanded_size(node, {}) > MAX_READ_BYTES:
+            return _TOO_BIG
+        return None if node is None else loader.construct_document(node)
+    finally:
+        loader.dispose()
+
+
+def _expanded_size(node: yaml.Node, sizes: dict[int, int]) -> int:
+    if isinstance(node, yaml.ScalarNode):
+        return len(node.value)
+    if id(node) not in sizes:
+        is_list = isinstance(node, yaml.SequenceNode)
+        children = node.value if is_list else [part for pair in node.value for part in pair]
+        sizes[id(node)] = 1 + sum(_expanded_size(child, sizes) for child in children)
+    return sizes[id(node)]
+
+
+def _host_files(data: dict, folder: PurePosixPath) -> list[str]:
+    """Top-level entries filled from a host path. Outside swarm, Compose bind-mounts a secret
+    or config file, and a volume's driver_opts device is a host folder."""
+    found = []
+    for section, key in (("secrets", "file"), ("configs", "file"), ("volumes", "device")):
+        for entry_name, entry in _as_dict(data.get(section)).items():
+            if section == "volumes":
+                entry = _as_dict(entry).get("driver_opts")
+            source = _as_dict(entry).get(key)
+            if isinstance(source, str) and _leaves_repo(source, folder):
+                found.append(
+                    f"{section}.{entry_name}: mounts {source} from your machine into the container."
+                )
+    return found
 
 
 def _risky(name: str, service: Any, folder: PurePosixPath) -> list[str]:
@@ -76,13 +122,14 @@ def _risky(name: str, service: Any, folder: PurePosixPath) -> list[str]:
     for key in ("cap_add", "devices"):
         if service.get(key):
             found.append(f"{name}: {key} gives the container extra power over your machine.")
-    if any("unconfined" in str(opt) for opt in _as_list(service.get("security_opt"))):
+    opts = _as_list(service.get("security_opt"))
+    if any(isinstance(opt, str) and "unconfined" in opt for opt in opts):
         found.append(f"{name}: security_opt turns off a container safety feature.")
     for port in _as_list(service.get("ports")):
         if _publishes_to_network(port):
             found.append(
-                f"{name}: port {port} is open to your whole network; 127.0.0.1:... keeps it "
-                "on this machine."
+                f"{name}: port {_port_number(port)} is open to your whole network; 127.0.0.1:... "
+                "keeps it on this machine."
             )
     for volume in _as_list(service.get("volumes")):
         source = _bind_source(volume)
@@ -90,7 +137,31 @@ def _risky(name: str, service: Any, folder: PurePosixPath) -> list[str]:
             found.append(f"{name}: a volume entry could not be understood.")
         elif source is not None and _leaves_repo(source, folder):
             found.append(f"{name}: mounts {source} from your machine into the container.")
+    for source in _build_folders(service.get("build")):
+        if isinstance(source, str) and _leaves_repo(source, folder):
+            found.append(
+                f"{name}: builds from {source}, outside the repo, so the image can copy files "
+                "from your machine."
+            )
     return found
+
+
+def _build_folders(build: Any) -> list[Any]:
+    if not isinstance(build, dict):
+        return [build]
+    extra = build.get("additional_contexts")
+    # Additional contexts are a name: path map, or a list of "name=path".
+    if isinstance(extra, dict):
+        return [build.get("context"), *extra.values()]
+    pairs = [e.split("=", 1)[-1] for e in _as_list(extra) if isinstance(e, str)]
+    return [build.get("context"), *pairs]
+
+
+def _port_number(port: Any) -> int | str:
+    """A long-form entry can hold other keys of any size, so only its port is shown."""
+    if isinstance(port, dict):
+        port = port.get("published", port.get("target"))
+    return port if isinstance(port, int | str) else "?"
 
 
 _NOT_UNDERSTOOD = object()
@@ -128,7 +199,7 @@ def _leaves_repo(source: str, folder: PurePosixPath) -> bool:
 def _publishes_to_network(port: Any) -> bool:
     """A published port with no 127.0.0.1 in front listens on every network the machine is on."""
     if isinstance(port, dict):
-        return "published" in port and port.get("host_ip") not in ("127.0.0.1", "::1", "localhost")
+        return port.get("host_ip") not in ("127.0.0.1", "::1", "localhost")
     text = str(port) if isinstance(port, int | str) else ""
     if ":" not in text:
         # "8000" alone publishes on a random port, on every network.
@@ -142,3 +213,7 @@ def _true_or_variable(value: str) -> bool:
 
 def _as_list(value: Any) -> list:
     return value if isinstance(value, list) else []
+
+
+def _as_dict(value: Any) -> dict:
+    return value if isinstance(value, dict) else {}

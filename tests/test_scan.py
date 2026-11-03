@@ -28,6 +28,13 @@ def test_symlinks_are_reported_but_never_followed(tmp_path):
     assert set(scan.skipped_symlinks) == {"notes.md", "linked_dir"}
 
 
+def test_links_inside_skipped_folders_are_still_reported(tmp_path):
+    outside = make_repo(tmp_path / "outside", {"id_rsa": "key"})
+    repo = make_repo(tmp_path / "r", {"build/out.o": ""})
+    (repo / "build" / "keys").symlink_to(outside, target_is_directory=True)
+    assert scan_repo(repo).skipped_symlinks == ("build/keys",)
+
+
 def test_empty_repo_has_no_files(tmp_path):
     (tmp_path / "r").mkdir()
     assert scan_repo(tmp_path / "r").files == ()
