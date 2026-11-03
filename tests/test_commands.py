@@ -122,6 +122,8 @@ UNSAFE = [
     "go build --toolexec=./x.sh ./...",
     "go build -ldflags=-extld=./x.sh ./...",
     "cargo build --config build.rustc-wrapper=evil",
+    "cargo build -Zunstable-options",
+    "cargo build -Zbuild-std",
     "npm install\nnpm ci",
     "npm install foo;bar",
     "npm install a\x00b",

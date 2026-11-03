@@ -44,7 +44,10 @@ def interact(
             continue
         reply = _question(outcome, ask)
         if reply is None:
-            print(f"\nPaused. Continue later with: setuppilot resume {outcome.run_id}")
+            if stores.database_warning:
+                print("\nStopped. Without a database this run cannot be resumed; start a new run.")
+            else:
+                print(f"\nPaused. Continue later with: setuppilot resume {outcome.run_id}")
             return False
         outcome = agent.answer(outcome.run_id, outcome.question_id, reply)
 

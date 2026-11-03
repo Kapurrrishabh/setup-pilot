@@ -57,6 +57,8 @@ jobs:
       - name: Look for known problems in the locked packages
         run: |
           uv export --locked --all-groups --no-emit-project --no-hashes -o "$RUNNER_TEMP/requirements.txt"
+          # PyPI has no +cpu torch build, so without this pip-audit would skip torch on Linux.
+          sed -i 's/+cpu ;/ ;/' "$RUNNER_TEMP/requirements.txt"
           uvx pip-audit@2.10.1 -r "$RUNNER_TEMP/requirements.txt" --no-deps --disable-pip --progress-spinner off
       - name: Build the package and check the database migrations are inside it
         run: |

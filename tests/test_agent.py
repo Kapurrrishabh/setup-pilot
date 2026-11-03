@@ -128,6 +128,21 @@ def test_rejecting_a_step_says_so_instead_of_claiming_the_install_finished(tmp_p
     assert "exit None" not in outcome.report
 
 
+def test_a_rejected_install_with_a_failed_check_says_why_the_check_failed(tmp_path):
+    files = {"pyproject.toml": "[project]\nname='demo'\n", "demo/__init__.py": ""}
+    check = ".venv/bin/python -c 'import demo'"
+    agent, _ = make_agent(tmp_path, files, runner=FakeRunner(failing={check}))
+    outcome = start(agent, tmp_path)
+    while isinstance(outcome, Waiting):
+        is_install = outcome.question["command"].startswith("uv pip install")
+        reply = {"action": "reject" if is_install else "approve"}
+        outcome = agent.answer(outcome.run_id, outcome.question_id, reply)
+    assert (
+        outcome.error["message"] == "You rejected some steps, so the setup could not be confirmed."
+    )
+    assert "import demo" in outcome.error["details"]
+
+
 def test_report_gives_the_exit_code_of_commands_that_ran(tmp_path):
     agent, _ = make_agent(tmp_path, PIP_REPO, runner=FakeRunner())
     outcome = start(agent, tmp_path)
@@ -601,6 +616,24 @@ def test_cancelled_run_report_makes_no_llm_call(tmp_path):
     agent, _, first = start_with_cancel(tmp_path, runner, llm=make_client(transport))
     approve_all(agent, first)
     assert len(transport.calls) == 1
+
+
+def test_a_cancel_during_the_ai_report_wins_over_a_verified_report(tmp_path):
+    tips = reply('{"extra_commands": [], "manual_steps": []}')
+    transport = FakeTransport(tips, reply("All good."))
+    agent, deps = make_agent(tmp_path, PIP_REPO, llm=make_client(transport))
+    send = transport.send
+
+    def cancel_during_the_report(model, messages, max_tokens, is_json):
+        if transport.calls:  # the first call is the README tips, the second the report
+            run = deps.runs.list_runs(1)[0]
+            deps.runs.set_status(run.id, "cancelled", "RunCancelled", "You cancelled this run.")
+        return send(model, messages, max_tokens, is_json)
+
+    transport.send = cancel_during_the_report
+    outcome = approve_all(agent, start(agent, tmp_path))
+    assert not outcome.is_verified and "Setup verified" not in outcome.report
+    assert outcome.error["error_type"] == "RunCancelled"
 
 
 def test_a_command_that_could_not_run_is_recorded_with_its_command(tmp_path):

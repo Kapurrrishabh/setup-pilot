@@ -69,11 +69,13 @@ progress bar, the approve / reject / edit box with keyboard keys A, R and E, the
 steps, Cancel, and a clear verified / not verified result with the next step), **Chat**, **Runs**
 (filter by result, search by repo), **Metrics** and **Settings** (tokens used today against the
 budget, requests left per model). It follows your system's light or dark theme, works on narrow
-windows, and can be used with the keyboard and a screen reader.
+windows, works with the keyboard only, and announces new steps and questions to screen readers
+(checked with axe; not yet tried with a real screen reader).
 
 Runs work in the background: refreshing or closing the page does not stop them, and a run
 waiting for approval is still there after the app restarts (with Supabase connected). A run that
-was stopped by a restart shows as **Paused**; open it and press Carry on.
+was stopped by a restart shows as **Paused**; open it and press Carry on. Do not drive the same
+run from the terminal and the web app at the same time.
 
 ![The Runs page in dark mode](docs/screenshots/runs-dark.png)
 
@@ -103,6 +105,9 @@ the setup really works, and report. It says "verified" only when those checks pa
 - Without a Groq key the run still works; it skips the README tips and the AI report.
 - A paused run is saved in Supabase, so it survives a restart. Without a database it is kept
   in memory only.
+- Docker mode supports pip, uv, npm, yarn, bun, Go, Cargo, Bundler, Maven and Gradle repos (and
+  Compose runs on your machine). Poetry, Pipenv, PDM, conda and pnpm repos are not supported in
+  Docker mode yet.
 - With `--docker`, `.venv` and `node_modules` are built for Linux inside the image. Use them from
   that image, or run again without `--docker` to use them on your machine.
 - SetupPilot never deletes anything. After a clone that timed out or was refused for size, or a
@@ -242,7 +247,10 @@ Each part says PASS, FAIL or SKIP (with what it needs). Results go to
 the team. It holds no secrets. Clones go to `~/setuppilot-test/` (not Desktop or Documents,
 because Docker cannot read those on macOS); delete it when done. The `setup` part needs the
 stacks' tools (uv, node and npm, pnpm, poetry, go, cargo, ruby and bundler, java and maven,
-docker); a missing tool shows as PrereqMissing in the table. On Windows, run it inside WSL.
+docker); a missing tool shows as PrereqMissing in the table. The `browser` part needs Google
+Chrome (or run `uv run --group e2e playwright install chromium` and set
+`SETUPPILOT_E2E_BROWSER=chromium`); without it, that part is skipped. On Windows, run it inside
+WSL.
 
 By hand, in Firefox and Safari: open http://127.0.0.1:5005, start a setup of
 `https://github.com/pypa/sampleproject`, press Edit and try `rm -rf /` (it must be refused),

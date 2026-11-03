@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from setuppilot.chat.bot import ChatSession, RepoChatbot, search_chunks
+from setuppilot.chat.bot import AnswerCutOff, ChatAnswer, ChatSession, RepoChatbot, search_chunks
 from setuppilot.chat.embed import Embedder
 from setuppilot.chat.repos import index_github_repo, repo_key
 from setuppilot.config import GroqModel, Settings
@@ -73,6 +73,9 @@ def run_chat_eval(
         else:
             try:
                 score = score_answer(case, bot.ask(ChatSession(key), case.question))
+            except AnswerCutOff:
+                # Counted as a miss, not a stop: a rerun would ask the same question and cut again.
+                score = score_answer(case, ChatAnswer("(answer cut off)", [], True, False, 0))
             except (LLMUnavailable, BudgetExceeded, CacheMiss) as error:
                 print(f"Stopped: {error.message} Run the same command later to carry on.")
                 break
@@ -82,6 +85,7 @@ def run_chat_eval(
     stamp = datetime.now(UTC).strftime("%Y-%m-%d-%H%M")
     heading = f"# Chatbot evaluation ({mode}), {stamp} UTC"
     done_line = f"{len(scores)} of {len(cases)} questions done."
+    results_dir.mkdir(parents=True, exist_ok=True)
     (results_dir / f"chat-{mode}-{stamp}.md").write_text(f"{heading}\n\n{done_line}\n\n{table}\n")
     print(table)
     return scores

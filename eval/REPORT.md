@@ -14,7 +14,8 @@ approves SetupPilot's own install and check commands and rejects README suggesti
 is the same. "Verified" means the real checks passed (for example `uv pip check` and an import
 test, `npm ls`, `cargo build`, `bundle check`, `mvn compile`), not just exit codes.
 
-`uv run setuppilot eval-setup --docker` runs the same set in Docker mode. Its scores go to
+`uv run setuppilot eval-setup --docker` runs the same set in Docker mode (Poetry and pnpm repos
+are not supported there yet; `./test.sh docker` leaves them out). Its scores go to
 `setup-docker.jsonl` and `setup-docker-<time>.md`, so a Docker run never carries on from native
 scores. The evaluation does not stop at a Groq limit: the agent carries on without the LLM (no
 README tips, no AI summary) and the repo is still saved as done, so after a limit the Tokens and

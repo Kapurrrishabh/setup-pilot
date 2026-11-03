@@ -275,11 +275,24 @@ def test_runs_and_metrics_pages_show_plain_words_not_stored_codes(web):
     assert "Cancelled by you" in metrics and "RunCancelled" not in metrics
 
 
-def test_runs_page_shows_a_run_that_a_restart_stopped_as_paused_not_working(web):
+def test_a_run_that_was_running_when_the_app_started_shows_as_paused(web):
+    run = web[3].runs.create_run(URL, str(web[2] / "dest"))
+    web[3].runs.set_status(run.id, "running", None, None)
+    # No agent is needed: shown_status never reaches it.
+    restarted = RunManager(None, web[3].runs, CommandTracker())
+    assert restarted.shown_status(web[3].runs.get_run(run.id)) == "paused"
+
+
+def test_a_run_another_process_is_working_on_shows_working_and_cannot_be_carried_on(web):
     run = web[3].runs.create_run(URL, str(web[2] / "dest"))
     web[3].runs.set_status(run.id, "running", None, None)
     page = get(web, "/runs").get_data(as_text=True)
-    assert 'data-status="paused">Paused</span>' in page and "Working" not in page
+    assert 'data-status="running">Working</span>' in page and ">Paused</span>" not in page
+    response = post(web, f"/api/runs/{run.id}/continue", {})
+    assert (
+        response.status_code == 400
+        and "Another SetupPilot" in response.get_json()["error"]["message"]
+    )
 
 
 def test_runs_page_shows_a_busy_run_as_working_not_paused(web, held_command):

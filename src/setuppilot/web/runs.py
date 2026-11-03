@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from setuppilot.agent.driver import Finished, SetupAgent, Stopped, Waiting
+from setuppilot.db.reports import HISTORY_LIMIT
 from setuppilot.db.runs import FINISHED_STATUSES, Run, RunStore
 from setuppilot.errors import SetupPilotError
 from setuppilot.guardrails.runner import cancel_group
@@ -50,6 +51,9 @@ class RunManager:
         # Each busy run, with the approved command it is running (None for other work).
         self._busy: dict[str, str | None] = {}
         self._problems: dict[str, dict[str, str]] = {}
+        # Runs this server drove, plus runs already 'running' when it started (a restart may have
+        # stopped those). Any other 'running' run belongs to another process, like the terminal.
+        self._known = {r.id for r in runs.list_runs(HISTORY_LIMIT) if r.status == "running"}
 
     def start(self, repo_url: str, dest_dir: str, use_docker: bool) -> str:
         run = self._runs.create_run(repo_url, dest_dir)
@@ -68,6 +72,11 @@ class RunManager:
         )
 
     def carry_on(self, run_id: str) -> None:
+        if run_id not in self._known:
+            raise RunNotWaiting(
+                "Another SetupPilot, for example in a terminal, is working on this run. Let it "
+                "finish there, or stop it there first."
+            )
         if not isinstance(self._agent.peek(run_id), Stopped):
             raise RunNotWaiting("This run has nothing left to carry on with.")
         self._in_background(run_id, lambda: self._agent.carry_on(run_id), command=None)
@@ -85,7 +94,8 @@ class RunManager:
         """A run saved as running with no worker was stopped by a restart, so it waits for you."""
         with self._lock:
             is_busy = run.id in self._busy
-        return "paused" if run.status == "running" and not is_busy else run.status
+        is_stopped = run.status == "running" and not is_busy and run.id in self._known
+        return "paused" if is_stopped else run.status
 
     def view(self, run_id: str) -> dict[str, Any]:
         """Everything the live page shows. Read from saved state, so it survives a refresh."""
@@ -118,7 +128,9 @@ class RunManager:
             "running_command": running_command,
             "question": state.question if isinstance(state, Waiting) and not is_cancelled else None,
             "question_id": state.question_id if isinstance(state, Waiting) else None,
-            "can_carry_on": isinstance(state, Stopped) and not is_cancelled,
+            "can_carry_on": isinstance(state, Stopped)
+            and not is_cancelled
+            and run_id in self._known,
             "report": state.report if isinstance(state, Finished) else None,
             "error": state.error if isinstance(state, Finished) else None,
             "is_verified": state.is_verified if isinstance(state, Finished) else False,
@@ -135,6 +147,7 @@ class RunManager:
             if run_id in self._busy:
                 raise RunNotWaiting("This run is still working. Wait for it to finish this step.")
             self._busy[run_id] = command
+            self._known.add(run_id)
             self._problems.pop(run_id, None)
         threading.Thread(target=self._work, args=(run_id, work), daemon=True).start()
 

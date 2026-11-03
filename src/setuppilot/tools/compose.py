@@ -19,6 +19,8 @@ MAX_READ_BYTES = 1_000_000
 # name repeats in every warning about it, so long names are cut too.
 _MAX_WARNINGS = 20
 _MAX_NAME_CHARS = 80
+_MAX_WARNING_CHARS = 300
+_PORT_WARNING = "is open to your whole network"
 _HOST_SHARING_KEYS = ("network_mode", "pid", "ipc", "userns_mode", "uts", "cgroup")
 _TRUE_WORDS = {"true", "yes", "on", "1"}
 
@@ -63,6 +65,11 @@ def _read_compose(root, relative: str) -> ComposeFile:
         for w in _risky(str(name)[:_MAX_NAME_CHARS], svc, folder)
     ]
     warnings += _host_files(data, folder)
+    # Ports last, so a crafted file cannot push the privileged and mount warnings past the cut.
+    warnings.sort(key=lambda w: _PORT_WARNING in w)
+    warnings = [
+        w if len(w) <= _MAX_WARNING_CHARS else w[:_MAX_WARNING_CHARS] + "…" for w in warnings
+    ]
     if len(warnings) > _MAX_WARNINGS:
         warnings = [*warnings[:_MAX_WARNINGS], f"...and {len(warnings) - _MAX_WARNINGS} more."]
     if {"include", "extends"} & set(data) or any(
@@ -138,7 +145,7 @@ def _risky(name: str, service: Any, folder: PurePosixPath) -> list[str]:
     for port in _as_list(service.get("ports")):
         if _publishes_to_network(port):
             found.append(
-                f"{name}: port {_port_number(port)} is open to your whole network; 127.0.0.1:... "
+                f"{name}: port {_port_number(port)} {_PORT_WARNING}; 127.0.0.1:... "
                 "keeps it on this machine."
             )
     for volume in _as_list(service.get("volumes")):

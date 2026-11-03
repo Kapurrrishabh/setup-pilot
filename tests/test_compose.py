@@ -26,6 +26,29 @@ def test_a_long_service_name_with_many_mounts_gives_a_short_warning_list(tmp_pat
     assert max(len(w) for w in found.warnings) < 300
 
 
+def test_many_port_warnings_cannot_hide_a_privileged_service_past_the_cut(tmp_path):
+    ports = "".join(f"  web{i}:\n    image: x\n    ports: ['80{i:02}:80']\n" for i in range(20))
+    evil = "  evil:\n    image: y\n    privileged: true\n    volumes: ['/:/host']\n"
+    (found,) = compose_files(tmp_path, {"compose.yaml": "services:\n" + ports + evil})
+    shown = " ".join(found.warnings)
+    assert "privileged" in shown and "mounts /" in shown
+
+
+def test_a_very_long_mount_path_gives_a_short_warning(tmp_path):
+    compose = f"services:\n  web:\n    image: x\n    volumes: ['/{'a' * 5000}:/c']\n"
+    (found,) = compose_files(tmp_path, {"compose.yaml": compose})
+    assert found.warnings and max(len(w) for w in found.warnings) <= 301
+
+
+def test_two_long_service_names_that_start_the_same_are_both_checked(tmp_path):
+    same = "x" * 100
+    first = f"  {same}a:\n    image: y\n"
+    second = f"  {same}b:\n    image: y\n    privileged: true\n"
+    compose = "services:\n" + first + second
+    (found,) = compose_files(tmp_path, {"compose.yaml": compose})
+    assert any("privileged" in w for w in found.warnings)
+
+
 def test_compose_file_lists_its_services(tmp_path):
     (found,) = compose_files(tmp_path, {"docker-compose.yml": WEB})
     assert (found.path, found.services, found.warnings) == ("docker-compose.yml", ("web", "db"), ())

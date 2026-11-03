@@ -112,13 +112,16 @@ def test_run_asks_before_each_command_and_reports(in_empty_project, monkeypatch,
     assert code == 0 and "Command: uv venv .venv" in out and "Setup verified" in out
 
 
-def test_quitting_at_a_question_leaves_the_run_paused(in_empty_project, monkeypatch, capsys):
+def test_quitting_without_a_database_says_the_run_cannot_be_resumed(
+    in_empty_project, monkeypatch, capsys
+):
     use_fake_agent(monkeypatch, make_repo(in_empty_project / "source", {"requirements.txt": ""}))
     (in_empty_project / "dest").mkdir()
     code = run_cli_with_answers(
         monkeypatch, ["q"], ["run", "https://github.com/someone/demo", "dest"]
     )
-    assert code == 1 and "Continue later with: setuppilot resume" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert code == 1 and "cannot be resumed" in out and "setuppilot resume" not in out
 
 
 def test_cli_asks_which_stack_and_skips_bad_answers(in_empty_project, monkeypatch, capsys):

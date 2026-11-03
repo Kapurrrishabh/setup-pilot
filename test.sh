@@ -12,6 +12,16 @@ cd "$(dirname "$0")" || exit 2
 
 ALL_PARTS="basics groq supabase setup docker chat browser"
 PARTS="${*:-$ALL_PARTS}"
+has_tool() { command -v "$1" > /dev/null 2>&1; }
+for part in $PARTS; do
+  [[ " $ALL_PARTS " == *" $part "* ]] || { echo "Unknown part: $part. Pick from: $ALL_PARTS"; exit 2; }
+done
+has_tool uv || { echo "uv is missing. Install it: https://docs.astral.sh/uv/"; exit 2; }
+has_tool git || { echo "git is missing. Install git first."; exit 2; }
+has_tool curl || { echo "curl is missing. Install curl first."; exit 2; }
+PORT="$(uv run python -c 'from pathlib import Path; from setuppilot.config import load_settings
+print(load_settings(Path("config.yaml")).web.port)')" || exit 2
+
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
 OUT="test-results/$STAMP-$(hostname -s)"
 # Not under Desktop, Documents or Downloads: on macOS, Docker cannot read those folders.
@@ -34,19 +44,12 @@ check() {
 }
 
 has_setting() { [ -n "${!1:-}" ] || grep -qE "^$1=.+" .env 2>/dev/null; }
-has_tool() { command -v "$1" > /dev/null 2>&1; }
 wants() { [[ " $PARTS " == *" $1 "* ]]; }
 # A fixed sleep is too short on a slow first start and wastes time on a fast one.
 wait_for_web() {
-  for _ in $(seq 60); do curl -fsS -o /dev/null http://127.0.0.1:5005/ && return 0; sleep 1; done
+  for _ in $(seq 60); do curl -fsS -o /dev/null "http://127.0.0.1:$PORT/" && return 0; sleep 1; done
   return 1
 }
-
-for part in $PARTS; do
-  [[ " $ALL_PARTS " == *" $part "* ]] || { echo "Unknown part: $part. Pick from: $ALL_PARTS"; exit 2; }
-done
-has_tool uv || { echo "uv is missing. Install it: https://docs.astral.sh/uv/"; exit 2; }
-has_tool git || { echo "git is missing. Install git first."; exit 2; }
 
 info "machine: $(uname -sm), $(hostname -s); parts: $PARTS"
 info "results: $OUT ; clones: $WORK"
@@ -72,12 +75,20 @@ fi
 if wants supabase; then
   if has_setting SUPABASE_DB_URL; then
     check "Supabase write and read back" uv run setuppilot db-check
+    # Through the app's own pool: psycopg's errors repeat the URL, password included.
     check "row level security on every table, nothing granted to anon" uv run python - <<'EOF'
 import os, sys
-import psycopg
+from pathlib import Path
 from dotenv import load_dotenv
+from setuppilot.config import load_settings
+from setuppilot.db.postgres import open_pool
+from setuppilot.errors import DatabaseUnavailable
 load_dotenv(".env")
-with psycopg.connect(os.environ["SUPABASE_DB_URL"], prepare_threshold=None) as conn:
+try:
+    pool = open_pool(os.environ["SUPABASE_DB_URL"], load_settings(Path("config.yaml")).database)
+except DatabaseUnavailable as error:
+    sys.exit(f"{error.message} {error.details}")
+with pool.connection() as conn:
     open_tables = conn.execute(
         "select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace "
         "where n.nspname = 'public' and c.relkind = 'r' and not c.relrowsecurity"
@@ -86,8 +97,8 @@ with psycopg.connect(os.environ["SUPABASE_DB_URL"], prepare_threshold=None) as c
         "select distinct table_name, grantee from information_schema.role_table_grants "
         "where table_schema = 'public' and grantee in ('anon', 'authenticated')"
     ).fetchall()
-print("tables without row level security:", [r[0] for r in open_tables] or "none")
-print("grants to anon/authenticated:", grants or "none")
+print("tables without row level security:", [r["relname"] for r in open_tables] or "none")
+print("grants to anon/authenticated:", [dict(r) for r in grants] or "none")
 sys.exit(1 if open_tables or grants else 0)
 EOF
     # Stop at the first question, then carry on in a new process: the run must come back from Supabase.
@@ -117,28 +128,35 @@ stop_compose_apps() {
   done
 }
 
-# Prints the Total row of the newest eval table, and fails unless every repo was verified.
+# The newest table of one kind in a folder, and whether it covers every case: an evaluation that
+# stopped early writes "12 of 30 ... done", and its partial scores must not count as a pass.
+newest_table() { ls -t "$1"/"$2"-*.md 2>/dev/null | head -1; }
+is_complete() { grep -q '^\([0-9][0-9]*\) of \1 [a-z]* done' "$1" || { grep " done" "$1"; return 1; }; }
+
+# Prints the Total row of the newest setup table, and fails unless every repo was verified.
 all_verified() {
-  local table; table="$(ls -t "$1"/setup-*.md 2>/dev/null | head -1)"
+  local table; table="$(newest_table "$1" "$2")"
   [ -n "$table" ] || { echo "No result table in $1"; return 1; }
+  is_complete "$table" || return 1
   grep "Total" "$table"
   grep "Total" "$table" | awk -F'|' '{ split($6, v, " "); split(v[1], n, "/"); exit (n[1] == n[2] ? 0 : 1) }'
 }
 
-# Prints the Total row of the newest chat table for a mode, and fails if grounding is under the
-# spec's 80% target.
+# Prints the Total row of the newest chat table for a mode, and fails if it is incomplete or if
+# grounding is under the spec's 80% target.
 grounded_80() {
-  local table; table="$(ls -t "$1"/chat-"$2"-*.md 2>/dev/null | head -1)"
+  local table; table="$(newest_table "$1" "chat-$2")"
   [ -n "$table" ] || { echo "No result table in $1"; return 1; }
+  is_complete "$table" || return 1
   grep "Total" "$table"
-  grep "Total" "$table" | awk -F'|' '{ split($5, v, " "); split(v[1], n, "/"); exit (n[1] * 100 >= n[2] * 80 ? 0 : 1) }'
+  grep "Total" "$table" | awk -F'|' '{ split($5, v, " "); split(v[1], n, "/"); exit (n[2] > 0 && n[1] * 100 >= n[2] * 80 ? 0 : 1) }'
 }
 
 if wants setup; then
   echo; echo "== setup evaluation: 15 real repos, on this machine (a few minutes)"
   info "repos need their tools: uv, node+npm, pnpm, poetry, go, cargo, ruby+bundler, java+maven, docker. A missing tool shows as PrereqMissing."
   uv run setuppilot eval-setup --workspace "$WORK/eval" --results "$OUT/setup"
-  check "every eval repo verified" all_verified "$OUT/setup"
+  check "every eval repo verified" all_verified "$OUT/setup" setup
 fi
 
 if wants docker; then
@@ -155,17 +173,20 @@ yaml.safe_dump({"repos": kept}, open(sys.argv[1], "w"), sort_keys=False)
 print(len(kept), "repos:", ", ".join(r["url"].rsplit("/", 1)[1] for r in kept))
 EOF
     uv run setuppilot eval-setup --docker --repos "$OUT/docker-repos.yaml" --workspace "$WORK/docker" --results "$OUT/docker"
-    check "every Docker-mode repo verified" all_verified "$OUT/docker"
+    check "every Docker-mode repo verified" all_verified "$OUT/docker" setup-docker
     echo; echo "== can a container reach the web app? (known problem, see docs/SECURITY.md)"
     uv run setuppilot web > "$OUT/web-docker.log" 2>&1 &
     web_pid=$!
-    wait_for_web || fail "web app did not start (see $OUT/web-docker.log)"
-    if docker run --rm --add-host host.docker.internal:host-gateway python:3.12-slim python -c \
-      "import urllib.request as u; u.urlopen(u.Request('http://host.docker.internal:5005/', headers={'Host': '127.0.0.1:5005'}), timeout=5)" \
-      > /dev/null 2>&1; then
+    # The Python image the eval above already pulled, so this needs no extra download.
+    image="$(uv run python -c 'from setuppilot.guardrails.docker_mode import DOCKER_IMAGES; print(DOCKER_IMAGES["pip"])')"
+    if ! wait_for_web; then
+      fail "web app did not start (see $OUT/web-docker.log)"
+    elif docker run --rm --add-host host.docker.internal:host-gateway "$image" python -c \
+      "import urllib.request as u; u.urlopen(u.Request('http://host.docker.internal:$PORT/', headers={'Host': '127.0.0.1:$PORT'}), timeout=5)" \
+      > /dev/null; then
       info "a container CAN reach the web app on this machine (expected; close the app during --docker runs)"
     else
-      info "a container could NOT reach the web app on this machine"
+      info "a container could NOT reach the web app on this machine (or docker run failed; see above)"
     fi
     kill "$web_pid" 2> /dev/null; wait "$web_pid" 2> /dev/null
   else
@@ -182,7 +203,9 @@ if wants chat; then
     uv run setuppilot eval-chat --mode full --results "$OUT/chat"
     check "chatbot answers grounded for 80%+" grounded_80 "$OUT/chat" full
     if has_setting SUPABASE_DB_URL; then
-      check "chatbot replay from cached answers (no new LLM calls)" uv run setuppilot eval-chat --mode replay --results "$OUT/chat"
+      echo; echo "== chatbot replay from cached answers (no new LLM calls)"
+      uv run setuppilot eval-chat --mode replay --results "$OUT/chat"
+      check "every answer came back from the cache" is_complete "$(newest_table "$OUT/chat" chat-replay)"
     else
       skip "chat replay" "the answer cache only survives a restart in Supabase"
     fi
@@ -192,14 +215,17 @@ if wants chat; then
 fi
 
 if wants browser; then
-  if (echo > /dev/tcp/127.0.0.1/5005) 2> /dev/null; then
-    fail "browser (something is already using port 5005; stop it first)"
+  has_chrome() { has_tool google-chrome || has_tool google-chrome-stable || [ -d "/Applications/Google Chrome.app" ]; }
+  if [ -z "${SETUPPILOT_E2E_BROWSER:-}" ] && ! has_chrome; then
+    skip "browser" "install Google Chrome, or run: uv run --group e2e playwright install chromium, then SETUPPILOT_E2E_BROWSER=chromium ./test.sh browser"
+  elif (echo > "/dev/tcp/127.0.0.1/$PORT") 2> /dev/null; then
+    fail "browser (something is already using port $PORT; stop it first)"
   else
     uv run setuppilot web > "$OUT/web.log" 2>&1 &
     web_pid=$!
     if wait_for_web; then
       check "click through the web app in a browser" \
-        uv run --group e2e python scripts/browser_check.py --work "$WORK/browser"
+        uv run --group e2e python scripts/browser_check.py --base "http://127.0.0.1:$PORT" --work "$WORK/browser"
     else
       fail "web app did not start (see $OUT/web.log)"
     fi

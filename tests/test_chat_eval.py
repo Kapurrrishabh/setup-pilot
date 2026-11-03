@@ -112,6 +112,21 @@ def test_stopped_run_carries_on_where_it_left_off(tmp_path, stores):
     )
 
 
+def test_a_cut_off_answer_counts_as_a_miss_and_the_evaluation_goes_on(tmp_path, stores):
+    answer = json.dumps({"answer": "MIT", "found": True, "sources": ["LICENSE"]})
+    llm = make_client(FakeTransport(reply("{", is_truncated=True), reply(answer)))
+    cases = [LICENSE_CASE, ChatCase(URL, "Is it MIT License text?", True, ("mit",), "LICENSE")]
+    done = run_chat_eval(SETTINGS, stores, cases, "full", tmp_path, FakeEmbedder(), llm)
+    assert [s.is_correct for s in done] == [False, True]
+
+
+def test_a_stop_before_any_answer_still_writes_the_table_in_a_new_folder(tmp_path, stores):
+    limit = LLMUnavailable("Daily limit reached.", "x")
+    llm = make_client(FakeTransport(limit, limit))
+    run_chat_eval(SETTINGS, stores, [LICENSE_CASE], "full", tmp_path / "new", FakeEmbedder(), llm)
+    assert list((tmp_path / "new").glob("chat-full-*.md"))
+
+
 def test_replay_mode_never_calls_groq():
     with pytest.raises(CacheMiss, match="not in the cache"):
         CacheOnlyTransport().send(groq_config().big, [], 10, True)

@@ -134,7 +134,10 @@ def _check_flag(arg: str, program: str, text: str) -> None:
         program in NODE_MANAGERS and re.fullmatch(r"-[A-Za-z]*g[A-Za-z]*", arg)
     ):
         raise _blocked(text, f"{arg!r} installs outside this project.")
-    if arg.startswith("-") and flag.lstrip("-") in _TOOL_BLOCKED_FLAGS.get(program, set()):
+    is_glued_cargo_z = program == "cargo" and arg.startswith("-Z")  # -Zbuild-std and friends
+    if is_glued_cargo_z or (
+        arg.startswith("-") and flag.lstrip("-") in _TOOL_BLOCKED_FLAGS.get(program, set())
+    ):
         raise _blocked(text, f"{arg!r} could make {program} run another program.")
 
 

@@ -482,7 +482,7 @@ def _verify(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
     if skipped:
         checks.append(
             {
-                "name": "You approved every step",
+                "name": _ALL_APPROVED,
                 "is_passed": False,
                 "detail": "Rejected: " + "; ".join(skipped),
             }
@@ -498,11 +498,16 @@ def _verify(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
     failed = [c for c in checks if not c["is_passed"]]
     update: dict = {"checks": checks, "is_verified": not failed}
     if skipped:
+        ran_check = any(i["kind"] == "check" and i["status"] == "done" for i in state["plan"])
+        details = f"Rejected: {'; '.join(skipped)}. Start a new run and approve them to finish."
+        details += "".join(
+            f" {c['name']}: {c['detail'][:200]}" for c in failed if c["name"] != _ALL_APPROVED
+        )
         update["error"] = _error(
             VerifyFailed(
-                "You rejected some steps, so the setup was not checked.",
-                details=f"Rejected: {'; '.join(skipped)}. Start a new run and approve them to "
-                "finish the setup.",
+                "You rejected some steps, so the setup "
+                + ("could not be confirmed." if ran_check else "was not checked."),
+                details=details,
             )
         )
     elif failed:
@@ -514,6 +519,9 @@ def _verify(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
         )
     summary = f"{len(checks) - len(failed)} of {len(checks)} checks passed."
     return update, StepNote(summary, "checks" if ran else None, {"commands": ran})
+
+
+_ALL_APPROVED = "You approved every step"
 
 
 def _report(deps: AgentDeps, state: RunState) -> dict:
@@ -564,6 +572,10 @@ def _report(deps: AgentDeps, state: RunState) -> dict:
         error["error_type"] if error else None,
         error["message"] if error else None,
     )
+    # A Cancel during the LLM call above wins (the store keeps it), so the report must agree.
+    if status != "cancelled" and deps.runs.get_run(state["run_id"]).status == "cancelled":
+        error, is_verified = _error(_cancelled()), False
+        report = _plain_report(facts | {"verified": False, "problem": error["message"]})
     note = StepNote("Wrote the report.", "llm" if model else None, None, None, tokens, model)
     _save_step(deps, state["run_id"], "report", note, None, started)
     update = {"report": report, "is_verified": is_verified, "error": error}

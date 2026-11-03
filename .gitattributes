@@ -1,0 +1,2 @@
+# test.sh must keep Unix line endings, or bash in WSL cannot run a Windows checkout of it.
+*.sh text eol=lf
