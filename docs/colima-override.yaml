@@ -1,0 +1,14 @@
+# Keep every forwarded port on this Mac only (127.0.0.1). By default Colima forwards ports that
+# listen on 0.0.0.0 inside the VM to 0.0.0.0 here, which opens them to the whole network.
+# Rules here come before Colima's own, and the first matching rule wins.
+portForwards:
+  - guestIP: 0.0.0.0
+    guestIPMustBeZero: true
+    guestPortRange: [1, 65535]
+    hostIP: 127.0.0.1
+    proto: tcp
+  - guestIP: 0.0.0.0
+    guestIPMustBeZero: true
+    guestPortRange: [1, 65535]
+    hostIP: 127.0.0.1
+    proto: udp

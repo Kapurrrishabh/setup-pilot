@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %} · settings{% endblock %}
+{% block content %}
+<h1>Settings and limits</h1>
+{% if llm_problem %}<div class="banner warn">{{ llm_problem }}</div>{% endif %}
+<section class="card">
+  <h2>Token budget</h2>
+  <p>Tokens used today: <strong>{{ tokens_today }}</strong> / {{ budget.tokens_per_day }} (per run: {{ budget.tokens_per_run }})</p>
+</section>
+<section class="card">
+  <h2>Groq models</h2>
+  <table>
+    <thead><tr><th>Role</th><th>Model</th><th>Requests left today</th><th>Per minute</th><th>Tokens per minute</th><th>Tokens per day</th></tr></thead>
+    <tbody>
+    {% for m in models %}
+      <tr><td>{{ m.role }}</td><td>{{ m.name }}</td><td>{{ m.limits.requests_per_day - m.calls }} / {{ m.limits.requests_per_day }}</td>
+          <td>{{ m.limits.requests_per_minute }}</td><td>{{ m.limits.tokens_per_minute }}</td><td>{{ m.limits.tokens_per_day }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">Limits come from config.yaml; copy your real ones from console.groq.com/settings/limits. Days are UTC.</p>
+</section>
+<section class="card">
+  <h2>Other</h2>
+  <p>Database: {{ 'connected' if not database_warning else 'not connected (memory only)' }}</p>
+  <p>LangSmith tracing: {{ 'on' if is_tracing_on else 'off' }}</p>
+</section>
+{% endblock %}

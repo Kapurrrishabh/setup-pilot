@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %} · metrics{% endblock %}
+{% block content %}
+<h1>Metrics</h1>
+<div class="tiles">
+  <div class="tile"><span>Finished runs</span><strong>{{ summary.finished_runs }}</strong></div>
+  <div class="tile"><span>Success rate</span><strong>{{ '%.0f%%'|format(summary.success_rate * 100) if summary.success_rate is not none else '-' }}</strong></div>
+  <div class="tile"><span>Average time</span><strong>{{ '%.0fs'|format(summary.average_seconds) if summary.average_seconds is not none else '-' }}</strong></div>
+  <div class="tile"><span>Average tokens</span><strong>{{ '%.0f'|format(summary.average_tokens) if summary.average_tokens is not none else '-' }}</strong></div>
+  <div class="tile"><span>Rate-limit hits</span><strong>{{ summary.rate_limit_hits }}</strong></div>
+  <div class="tile"><span>Switched to small model</span><strong>{{ summary.small_model_fallbacks }}</strong></div>
+</div>
+<section class="card">
+  <h2>Most common errors</h2>
+  <ul>
+  {% for error_type, count in summary.common_errors %}<li>{{ error_type }}: {{ count }}</li>{% else %}<li>None.</li>{% endfor %}
+  </ul>
+</section>
+<p class="muted">A run's time includes any time it waited for your approval.</p>
+{% endblock %}

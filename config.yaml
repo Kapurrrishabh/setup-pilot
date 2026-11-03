@@ -1,0 +1,98 @@
+# SetupPilot settings. Secrets (API keys, DB URL) go in .env, never here.
+
+logging:
+  level: INFO
+  file: logs/setuppilot.jsonl
+
+groq:
+  base_url: https://api.groq.com/openai/v1
+  # PROVISIONAL retry settings. Tries per model, then we switch to the small model or stop.
+  timeout_seconds: 30
+  max_attempts: 4
+  backoff_base_seconds: 1
+  backoff_max_seconds: 30
+  # PROVISIONAL limits, copied from https://console.groq.com/docs/rate-limits on 2026-11-01.
+  # Replace them with the numbers shown for your account at https://console.groq.com/settings/limits
+  big:
+    name: openai/gpt-oss-120b
+    # Low effort means less hidden reasoning, so fewer tokens. Raise it if answers get worse.
+    reasoning_effort: low
+    limits:
+      requests_per_minute: 30
+      requests_per_day: 1000
+      tokens_per_minute: 8000
+      tokens_per_day: 200000
+  small:
+    name: openai/gpt-oss-20b
+    reasoning_effort: low
+    limits:
+      requests_per_minute: 30
+      requests_per_day: 1000
+      tokens_per_minute: 8000
+      tokens_per_day: 200000
+
+# PROVISIONAL: a setup run should need 3-6 calls of about 2-4k tokens each.
+# Check real usage on the Metrics page after Phase 7 and adjust.
+budget:
+  tokens_per_run: 30000
+  tokens_per_day: 300000
+
+# PROVISIONAL: one server needs only a few connections, and the free Supabase pooler has a low cap.
+database:
+  pool_max_size: 4
+  connect_timeout_seconds: 10
+
+repo:
+  # PROVISIONAL: the total size of the repo's files (not its history). Fits most libraries
+  # and apps; raise it if a real repo you need is refused.
+  max_size_mb: 200
+  clone_timeout_seconds: 300
+  # Cap on the file tree summary sent to the LLM, to keep prompts small.
+  max_tree_chars: 6000
+
+runner:
+  # PROVISIONAL: a big install (a Rust build, say) can take many minutes on a slow laptop.
+  timeout_seconds: 900
+  # Keep only the end of long output; errors are usually at the end.
+  max_output_chars: 20000
+
+agent:
+  # Stops a run that loops (for example, edit after edit). PROVISIONAL.
+  max_steps: 40
+  # Only the start of the README goes to the LLM, to keep each call small.
+  max_readme_chars: 6000
+  # PROVISIONAL: gpt-oss reasoning tokens count toward these too.
+  plan_max_tokens: 800
+  report_max_tokens: 600
+
+chat:
+  # Runs on your machine; no paid embedding API. Its size (384) is fixed in 002_chat.sql.
+  embedding_model: sentence-transformers/all-MiniLM-L6-v2
+  embedding_dimensions: 384
+  # Repos cloned just for the chatbot go here.
+  repos_dir: workspace/chat-repos
+  # The model reads at most 256 tokens (about 1000 characters), so chunks stay below that.
+  chunk_chars: 800
+  chunk_overlap_chars: 100
+  max_file_bytes: 200000
+  # Keeps the free database small: about 4 MB per repo at this size.
+  max_chunks_per_repo: 1500
+  top_k: 5
+  # Measured on eval/chat_questions.yaml (2026-11-02): with at most 2 chunks per file, the right
+  # file is found for 21/25 questions at 0.2, but only 14/25 at 0.3. Off-topic questions score
+  # about 0.16, so 0.2 still skips the LLM for them.
+  max_chunks_per_file: 2
+  min_similarity: 0.2
+  answer_max_tokens: 700
+  # The last few turns go into each prompt; older ones are folded into a short summary
+  # (one small-model call every history_turns questions).
+  history_turns: 4
+
+web:
+  # Loopback only: other machines must never reach an app that runs commands here.
+  host: 127.0.0.1
+  # 5000 is taken by AirPlay on macOS.
+  port: 5005
+  max_request_bytes: 16384
+  # PROVISIONAL: stops a stuck page from flooding the server; far above a person clicking.
+  posts_per_minute: 120

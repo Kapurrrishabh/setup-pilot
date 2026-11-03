@@ -1,0 +1,138 @@
+import time
+
+import pytest
+
+from setuppilot.tools.compose import find_compose_files
+from setuppilot.tools.scan import scan_repo
+from tests.fakes import make_repo
+
+WEB = (
+    "services:\n  web:\n    build: .\n    ports: ['127.0.0.1:8000:8000']\n"
+    "  db:\n    image: postgres\n"
+)
+
+
+def compose_files(tmp_path, files):
+    scan = scan_repo(make_repo(tmp_path / "repo", files))
+    return find_compose_files(scan.root, scan.files)
+
+
+def test_compose_file_lists_its_services(tmp_path):
+    (found,) = compose_files(tmp_path, {"docker-compose.yml": WEB})
+    assert (found.path, found.services, found.warnings) == ("docker-compose.yml", ("web", "db"), ())
+
+
+def test_docker_lookup_order_and_top_level_come_first(tmp_path):
+    files = {
+        "docker/compose.yml": WEB,
+        "docker-compose.yaml": WEB,
+        "docker-compose.yml": WEB,
+        "compose.yaml": WEB,
+        "docker-compose.override.yaml": WEB,
+    }
+    assert [f.path for f in compose_files(tmp_path, files)] == [
+        "compose.yaml",
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        "docker-compose.override.yaml",
+        "docker/compose.yml",
+    ]
+
+
+def test_compose_files_deeper_than_one_folder_are_ignored(tmp_path):
+    assert compose_files(tmp_path, {"a/b/docker-compose.yml": WEB}) == ()
+
+
+def test_risky_settings_are_flagged(tmp_path):
+    risky = (
+        "services:\n  app:\n    image: x\n    privileged: true\n    network_mode: host\n"
+        "    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n      - ./data:/data\n"
+        "      - type: bind\n        source: /etc\n        target: /host-etc\n"
+    )
+    (found,) = compose_files(tmp_path, {"compose.yaml": risky})
+    assert len(found.warnings) == 4, found.warnings
+    assert any("docker.sock" in w for w in found.warnings)
+    assert not any("./data" in w for w in found.warnings)
+
+
+def test_broken_yaml_becomes_a_warning(tmp_path):
+    (found,) = compose_files(tmp_path, {"compose.yaml": "services: [unclosed"})
+    assert "Could not read it" in found.warnings[0]
+
+
+def warnings_for(tmp_path, service_yaml, name="compose.yaml"):
+    (found,) = compose_files(tmp_path, {name: "services:\n  app:\n" + service_yaml})
+    return found.warnings
+
+
+@pytest.mark.parametrize(
+    "volume",
+    ["${HOME}/.aws:/root/.aws", "$HOME/.ssh:/root/.ssh", "../..:/host", "~/.kube:/k", "/:/host"],
+)
+def test_mounts_that_reach_outside_the_repo_are_flagged(tmp_path, volume):
+    assert warnings_for(tmp_path, f"    volumes: ['{volume}']\n")
+
+
+@pytest.mark.parametrize("volume", ["./data:/data", "data_volume:/var/lib/db", "/app/node_modules"])
+def test_repo_mounts_and_named_or_anonymous_volumes_are_not_flagged(tmp_path, volume):
+    assert warnings_for(tmp_path, f"    volumes: ['{volume}']\n") == ()
+
+
+def test_parent_folder_mount_from_a_compose_file_in_a_subfolder_stays_in_the_repo(tmp_path):
+    files = {"docker/compose.yml": "services:\n  app:\n    volumes: ['..:/app']\n"}
+    (found,) = compose_files(tmp_path, files)
+    assert found.warnings == ()
+
+
+@pytest.mark.parametrize(
+    "setting",
+    [
+        "    privileged: 'true'\n",
+        "    cap_add: [SYS_ADMIN]\n",
+        "    devices: ['/dev/sda:/dev/sda']\n",
+        "    security_opt: ['seccomp:unconfined']\n",
+        "    pid: host\n",
+        "    userns_mode: host\n",
+    ],
+)
+def test_settings_that_give_host_power_are_flagged(tmp_path, setting):
+    assert warnings_for(tmp_path, setting)
+
+
+def test_override_file_docker_applies_by_itself_is_checked_too(tmp_path):
+    files = {"docker-compose.yml": WEB, "docker-compose.override.yaml": RISKY_OVERRIDE}
+    flagged = [f for f in compose_files(tmp_path, files) if f.warnings]
+    assert [f.path for f in flagged] == ["docker-compose.override.yaml"]
+
+
+RISKY_OVERRIDE = "services:\n  web:\n    privileged: true\n"
+
+
+def test_include_of_unchecked_files_is_flagged(tmp_path):
+    files = {"compose.yaml": "include: [other.yml]\nservices:\n  web:\n    image: x\n"}
+    (found,) = compose_files(tmp_path, files)
+    assert "include/extends" in found.warnings[0]
+
+
+def test_yaml_alias_bomb_is_read_quickly(tmp_path):
+    levels = ["x0: &x0 [a, a, a, a, a, a, a, a, a]"]
+    levels += [f"x{i}: &x{i} [" + ", ".join([f"*x{i - 1}"] * 9) + "]" for i in range(1, 9)]
+    bomb = "\n".join(levels) + "\nservices:\n  app:\n    volumes: [*x8]\n"
+    start = time.perf_counter()
+    (found,) = compose_files(tmp_path, {"compose.yaml": bomb})
+    assert time.perf_counter() - start < 2
+    assert "could not be understood" in found.warnings[0]
+
+
+@pytest.mark.parametrize(
+    "port", ["'8000:8000'", "'0.0.0.0:8000:8000'", "8000", "{target: 80, published: 8080}"]
+)
+def test_ports_open_to_the_whole_network_are_flagged(tmp_path, port):
+    assert any("whole network" in w for w in warnings_for(tmp_path, f"    ports: [{port}]\n"))
+
+
+@pytest.mark.parametrize(
+    "port", ["'127.0.0.1:8000:8000'", "{target: 80, published: 8080, host_ip: 127.0.0.1}"]
+)
+def test_ports_kept_on_this_machine_are_not_flagged(tmp_path, port):
+    assert warnings_for(tmp_path, f"    ports: [{port}]\n") == ()

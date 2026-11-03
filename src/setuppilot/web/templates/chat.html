@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %} · chat{% endblock %}
+{% block content %}
+<h1>Ask about a repo</h1>
+{% if llm_problem %}<div class="banner warn">{{ llm_problem }}</div>{% endif %}
+<p class="muted">General questions only: what it does, layout, setup, license, how to contribute. Answers come from the repo's own files.</p>
+<form id="index-form" class="card row">
+  <input name="repo_url" required maxlength="300" placeholder="https://github.com/owner/repo">
+  <button type="submit">Index this repo</button>
+</form>
+<section class="card">
+  <label>Repo
+    <select id="repo">
+      {% for repo in repos %}<option>{{ repo }}</option>{% else %}<option value="">(index a repo first)</option>{% endfor %}
+    </select>
+  </label>
+  <div id="messages" class="messages"></div>
+  <form id="ask-form" class="row">
+    <input name="question" required maxlength="1000" placeholder="What does this repo do?">
+    <button type="submit">Ask</button>
+  </form>
+  <p class="muted">Tokens used in this chat: <span id="tokens">0</span></p>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='chat.js') }}"></script>{% endblock %}

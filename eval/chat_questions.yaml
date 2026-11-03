@@ -1,0 +1,129 @@
+# Chatbot evaluation: 30 questions over 5 repos. Facts checked against the repos on 2026-11-02.
+# Each answerable question names the one file that holds the fact. The last question for each
+# repo cannot be answered from the repo, so the right reply is to say the files do not tell.
+repos:
+  - url: https://github.com/pypa/sampleproject
+    questions:
+      - question: "What is this project for?"
+        answerable: true
+        expected_facts: ["packaging"]
+        expected_source: "README.md"
+      # LICENSE.txt holds the MIT text but never says "MIT"; only the classifier names it.
+      - question: "What license is this project released under?"
+        answerable: true
+        expected_facts: ["mit"]
+        expected_source: "pyproject.toml"
+      - question: "Which Python versions does this project support?"
+        answerable: true
+        expected_facts: ["3.9"]
+        expected_source: "pyproject.toml"
+      - question: "How do I run the tests?"
+        answerable: true
+        expected_facts: ["nox"]
+        expected_source: "noxfile.py"
+      - question: "On which operating systems does CI run the tests?"
+        answerable: true
+        expected_facts: ["macos", "windows"]
+        expected_source: ".github/workflows/test.yml"
+      - question: "How many times has sampleproject been downloaded from PyPI?"
+        answerable: false
+
+  - url: https://github.com/dtolnay/itoa
+    questions:
+      - question: "What does this crate do?"
+        answerable: true
+        expected_facts: ["integer", "string"]
+        expected_source: "README.md"
+      - question: "What license is itoa released under?"
+        answerable: true
+        expected_facts: ["mit", "apache"]
+        expected_source: "Cargo.toml"
+      - question: "What is the minimum supported Rust version?"
+        answerable: true
+        expected_facts: ["1.68"]
+        expected_source: "Cargo.toml"
+      - question: "How do I add itoa to my Rust project?"
+        answerable: true
+        expected_facts: ["1.0"]
+        expected_source: "README.md"
+      - question: "Which Rust toolchains does CI test against?"
+        answerable: true
+        expected_facts: ["nightly", "beta", "stable"]
+        expected_source: ".github/workflows/ci.yml"
+      - question: "Which companies use itoa in production?"
+        answerable: false
+
+  - url: https://github.com/pallets/itsdangerous
+    questions:
+      - question: "What does ItsDangerous do?"
+        answerable: true
+        expected_facts: ["sign"]
+        expected_source: "README.md"
+      - question: "What license does this project use?"
+        answerable: true
+        expected_facts: ["bsd"]
+        expected_source: "pyproject.toml"
+      - question: "What is the oldest Python version it supports?"
+        answerable: true
+        expected_facts: ["3.10"]
+        expected_source: "pyproject.toml"
+      - question: "How do I install it?"
+        answerable: true
+        expected_facts: ["pip install"]
+        expected_source: "docs/index.rst"
+      - question: "How can I contribute to this project?"
+        answerable: true
+        expected_facts: ["palletsprojects.com/contributing"]
+        expected_source: "README.md"
+      - question: "How much money did the Pallets organization get from donations last year?"
+        answerable: false
+
+  - url: https://github.com/expressjs/cors
+    questions:
+      - question: "What does this package do?"
+        answerable: true
+        expected_facts: ["middleware"]
+        expected_source: "README.md"
+      - question: "What license is cors released under?"
+        answerable: true
+        expected_facts: ["mit"]
+        expected_source: "LICENSE"
+      - question: "Which Node.js version does it need?"
+        answerable: true
+        expected_facts: ["0.10"]
+        expected_source: "package.json"
+      - question: "How do I install it?"
+        answerable: true
+        expected_facts: ["npm install cors"]
+        expected_source: "README.md"
+      - question: "Which test framework do the tests use?"
+        answerable: true
+        expected_facts: ["mocha"]
+        expected_source: "package.json"
+      - question: "What is the default request limit of the built-in rate limiter?"
+        answerable: false
+
+  - url: https://github.com/sindresorhus/slugify
+    questions:
+      - question: "What is this library useful for?"
+        answerable: true
+        expected_facts: ["url"]
+        expected_source: "readme.md"
+      - question: "What license is it released under?"
+        answerable: true
+        expected_facts: ["mit"]
+        expected_source: "license"
+      - question: "Which Node.js version does it need?"
+        answerable: true
+        expected_facts: ["20"]
+        expected_source: "package.json"
+      - question: "How do I install it?"
+        answerable: true
+        expected_facts: ["@sindresorhus/slugify"]
+        expected_source: "readme.md"
+      - question: "How do I report a security vulnerability?"
+        answerable: true
+        expected_facts: ["advisories"]
+        expected_source: ".github/security.md"
+      - question: "How much money has this project earned from GitHub Sponsors?"
+        answerable: false

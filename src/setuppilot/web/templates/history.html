@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %} · runs{% endblock %}
+{% block content %}
+<h1>Runs</h1>
+<table>
+  <thead><tr><th>Started (UTC)</th><th>Repo</th><th>Status</th><th>Time</th><th>Tokens</th><th>Error</th></tr></thead>
+  <tbody>
+  {% for row in rows %}
+    <tr>
+      <td><a href="{{ url_for('run_page', run_id=row.run.id) }}">{{ row.run.created_at.strftime('%Y-%m-%d %H:%M') }}</a></td>
+      <td>{{ row.run.repo_url }}</td>
+      <td class="status-{{ row.run.status }}">{{ row.run.status }}</td>
+      <td>{{ '%.0fs'|format(row.seconds) if row.seconds is not none else '-' }}</td>
+      <td>{{ row.tokens }}</td>
+      <td>{{ row.run.error_type or '' }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6">No runs yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

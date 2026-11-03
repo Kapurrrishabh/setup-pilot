@@ -1,0 +1,63 @@
+[project]
+name = "setuppilot"
+version = "0.1.0"
+description = "AI agent that sets up a GitHub repo on your machine, with your approval, plus a chatbot that answers questions about the repo."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "flask>=3.0",
+    "langgraph>=0.6",
+    "langgraph-checkpoint-postgres>=2.0",
+    "langsmith>=0.4",
+    "openai>=2.0",
+    "psycopg-pool>=3.2",
+    "psycopg[binary]>=3.2",
+    "pydantic>=2.9",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+    "sentence-transformers>=3.0",
+    "torch>=2.5",
+]
+
+[project.scripts]
+setuppilot = "setuppilot.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14.0"]
+build-backend = "uv_build"
+
+# CPU-only PyTorch on Linux (CI): the default Linux wheel brings GBs of GPU code we never use.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.3",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "S", "PLE"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S104", "S106", "S108", "S603", "S607"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+# Raised inside the langsmith package itself, not by our code.
+filterwarnings = ["ignore:langsmith.wrappers._openai_agents is deprecated:DeprecationWarning"]
+
+[tool.coverage.run]
+source = ["setuppilot"]
+branch = true

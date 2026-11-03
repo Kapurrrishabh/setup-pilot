@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Set up a GitHub repo</h1>
+<form id="setup-form" class="card">
+  <label>Public GitHub URL
+    <input name="repo_url" required maxlength="300" placeholder="https://github.com/owner/repo">
+  </label>
+  <label>Folder to clone into (it must exist)
+    <input name="dest_dir" required maxlength="500" placeholder="/Users/you/work">
+  </label>
+  <label class="inline"><input type="checkbox" name="use_docker"> Install inside a Docker container (safer for repos you do not trust; for those, close this app and use <code>setuppilot run --docker</code>, because a container can reach this app)</label>
+  <p class="warn-text">{{ warning }}</p>
+  <button type="submit">Start setup</button>
+</form>
+<section class="card">
+  <h2>Pre-flight checklist</h2>
+  <ul id="preflight" class="checks"><li>Checking…</li></ul>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='setup.js') }}"></script>{% endblock %}

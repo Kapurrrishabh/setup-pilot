@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>SetupPilot{% block title %}{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}">
+</head>
+<body>
+  <header>
+    <a class="brand" href="{{ url_for('setup_page') }}">SetupPilot</a>
+    <nav>
+      <a href="{{ url_for('setup_page') }}">Set up a repo</a>
+      <a href="{{ url_for('history_page') }}">Runs</a>
+      <a href="{{ url_for('chat_page') }}">Chat</a>
+      <a href="{{ url_for('metrics_page') }}">Metrics</a>
+      <a href="{{ url_for('settings_page') }}">Settings</a>
+    </nav>
+  </header>
+  <main>
+    {% if database_warning %}
+      <div class="banner warn">{{ database_warning }}</div>
+    {% endif %}
+    <div id="error" class="banner error" hidden>
+      <strong id="error-message"></strong>
+      <details><summary>Details</summary><pre id="error-details"></pre></details>
+    </div>
+    {% block content %}{% endblock %}
+  </main>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

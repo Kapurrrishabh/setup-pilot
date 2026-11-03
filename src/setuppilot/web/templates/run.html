@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %} · run{% endblock %}
+{% block content %}
+<div id="run" data-run-id="{{ run_id }}">
+  <h1>Setup run</h1>
+  <p class="muted"><span id="repo"></span> · status <strong id="status"></strong> <span id="busy" hidden>· working…</span></p>
+  <section id="question" class="card" hidden>
+    <h2 id="question-title"></h2>
+    <p id="question-reason"></p>
+    <pre id="question-command"></pre>
+    <p id="question-warning" class="warn-text"></p>
+    <p id="question-edit-error" class="error-text" hidden></p>
+    <div id="question-options"></div>
+    <div id="question-actions" class="actions">
+      <button data-action="approve">Approve</button>
+      <button data-action="reject" class="secondary">Reject</button>
+      <button data-action="edit" class="secondary">Edit…</button>
+    </div>
+    <div id="edit-box" hidden>
+      <input id="edit-command" maxlength="1000">
+      <button id="edit-send">Send edited command</button>
+    </div>
+  </section>
+  <section id="stopped" class="card" hidden>
+    <p>The app stopped in the middle of a step. You can carry on from the last saved point;
+       the last approved command may run again.</p>
+    <button id="carry-on">Carry on</button>
+  </section>
+  <section class="card">
+    <h2>Steps</h2>
+    <ol id="steps" class="steps"></ol>
+  </section>
+  <section id="report-card" class="card" hidden>
+    <h2 id="report-title">Report</h2>
+    <pre id="report"></pre>
+  </section>
+  <div class="actions">
+    <button id="cancel" class="danger">Cancel run</button>
+    <a class="button secondary" href="{{ url_for('setup_page') }}">Start a new run</a>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='run.js') }}"></script>{% endblock %}

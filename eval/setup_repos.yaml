@@ -1,0 +1,108 @@
+# Setup evaluation: 15 small public repos. Checked against the repos on 2026-11-02.
+# Stack, manager and install commands are what SetupPilot's detector and planner give for a
+# fresh clone. expected_result is a prediction for a normal laptop that has the stack's tools.
+repos:
+  - url: https://github.com/pypa/sampleproject
+    expected_stack: python
+    expected_manager: pip
+    expected_install: ["uv venv .venv", "uv pip install --python .venv -e ."]
+    expected_result: verified
+    note: "No requirements file, so the project itself is installed. One small dependency (peppercorn). The check imports sample."
+
+  - url: https://github.com/tartley/colorama
+    expected_stack: python
+    expected_manager: pip
+    expected_install: ["uv venv .venv", "uv pip install --python .venv -r requirements.txt -e ."]
+    expected_result: verified
+    note: "Has requirements.txt and requirements-dev.txt; SetupPilot uses requirements.txt, plus the project itself (it has a pyproject.toml). All wheels, no C code."
+
+  - url: https://github.com/mahmoud/boltons
+    expected_stack: python
+    expected_manager: pip
+    expected_install: ["uv venv .venv", "uv pip install --python .venv -e ."]
+    expected_result: verified
+    note: "Pure Python with no runtime dependencies, built with flit_core. docs/requirements-rtd.txt is not at the top level, so it is not used."
+
+  - url: https://github.com/pallets/itsdangerous
+    expected_stack: python
+    expected_manager: uv
+    expected_install: ["uv sync"]
+    expected_result: verified
+    note: "Has uv.lock. uv sync also installs the default dev groups (ruff, tox, mypy, pyright, pytest, pre-commit); all have wheels. Needs Python 3.10 or newer, which uv can download."
+
+  - url: https://github.com/python-poetry/cleo
+    expected_stack: python
+    expected_manager: poetry
+    expected_install: ["poetry install"]
+    expected_result: verified
+    note: "Needs Poetry installed, best 2.2 or newer: the lock was made by Poetry 2.2.1 and the dev tools sit in a [dependency-groups] table. No runtime dependencies; dev tools (sphinx, mypy, pytest) have wheels."
+
+  - url: https://github.com/JedWatson/classnames
+    expected_stack: node
+    expected_manager: npm
+    expected_install: ["npm ci"]
+    expected_result: verified
+    note: "No runtime dependencies; about 220 locked dev packages (rollup, tsd). package.json links the repo to itself (classnames-local is file:.), which npm handles as a link."
+
+  - url: https://github.com/tj/commander.js
+    expected_stack: node
+    expected_manager: npm
+    expected_install: ["npm ci"]
+    expected_result: verified
+    note: "No runtime dependencies; about 200 locked dev packages (eslint, prettier, typescript). package.json asks for Node 22.12 or newer, but npm ci only warns on an older Node."
+
+  - url: https://github.com/nodeca/js-yaml
+    expected_stack: node
+    expected_manager: npm
+    expected_install: ["npm ci"]
+    expected_result: verified
+    note: "One runtime dependency (argparse); about 450 locked dev packages (eslint, vite, rollup, typedoc). SetupPilot notes src/package.json as a sub-project; it only says the folder uses ES modules."
+
+  - url: https://github.com/unjs/defu
+    expected_stack: node
+    expected_manager: pnpm
+    expected_install: ["pnpm install"]
+    expected_result: verified
+    note: "pnpm-lock.yaml and packageManager pnpm@10.33.4 agree. Needs pnpm (corepack can provide it). pnpm 10 skips the build scripts of dependencies and only warns about it."
+
+  - url: https://github.com/dtolnay/itoa
+    expected_stack: rust
+    expected_manager: cargo
+    expected_install: ["cargo fetch"]
+    expected_result: verified
+    note: "No Cargo.lock in the repo, so cargo makes one. cargo fetch also downloads the criterion dev-dependency tree; cargo build only builds the small library. SetupPilot notes fuzz/Cargo.toml as a sub-project."
+
+  - url: https://github.com/rust-lang/log
+    expected_stack: rust
+    expected_manager: cargo
+    expected_install: ["cargo fetch"]
+    expected_result: verified
+    note: "Optional serde and sval crates and the dev-dependencies are fetched, but cargo build with default features needs none of them. Needs Rust 1.71 or newer. SetupPilot notes test_max_level_features/Cargo.toml as a sub-project."
+
+  - url: https://github.com/fatih/color
+    expected_stack: go
+    expected_manager: go
+    expected_install: ["go mod download"]
+    expected_result: verified
+    note: "Three small dependencies (go-colorable, go-isatty, x/sys). go.mod says go 1.25.0: Go 1.21 or newer downloads that toolchain by itself, older Go fails. SetupPilot warns if the installed Go is not 1.25."
+
+  - url: https://github.com/github/scientist
+    expected_stack: ruby
+    expected_manager: bundler
+    expected_install: ["bundle install"]
+    expected_result: verified
+    note: "The Gemfile only loads the gemspec; the dev gems are minitest and rake, both pure Ruby. No Gemfile.lock, so Bundler picks versions that fit the local Ruby (2.3 or newer)."
+
+  - url: https://github.com/FasterXML/java-classmate
+    expected_stack: java
+    expected_manager: maven
+    expected_install: ["./mvnw dependency:resolve -Dmaven.repo.local=.m2/repository"]
+    expected_result: verified
+    note: "Has mvnw (Maven 3.9.11). No runtime dependencies; the parent POM (oss-parent 80) is on Maven Central. Builds for Java 8, and CI tests JDK 8, 17, 21 and 25. Needs a JDK."
+
+  - url: https://github.com/dockersamples/wordsmith
+    expected_stack: docker
+    expected_manager: compose
+    expected_install: ["docker compose -f docker-compose.yml up -d --build --wait"]
+    expected_result: verified
+    note: "Builds a Java API (5 copies) and a Go web app, and runs Postgres 10. No health checks, so all 7 containers should show as running right away. Needs Docker running; the first build pulls about 1 GB of images (rough guess). Publishes port 8080 on all network interfaces."
