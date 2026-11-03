@@ -43,3 +43,12 @@ def test_extras_cannot_overwrite_core_fields(log_file):
 def test_library_warning_reaches_the_log_file(log_file):
     logging.getLogger("psycopg.pool").warning("database unreachable")
     assert last_entry(log_file)["logger"] == "psycopg.pool"
+
+
+def test_line_that_fails_to_format_does_not_print_the_secret(log_file, monkeypatch, capsys):
+    monkeypatch.setenv("GROQ_API_KEY", "gsk-test-secret-value")
+    # json cannot write a tuple key, so the line fails after the message is built.
+    logging.getLogger("setuppilot.test").info(
+        "key is %s", "gsk-test-secret-value", extra={"result": {("a", 1): "x"}}
+    )
+    assert "gsk-test-secret-value" not in capsys.readouterr().err

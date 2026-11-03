@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, time, timedelta
 from importlib import resources
+from time import monotonic, sleep
 from urllib.parse import urlsplit
 
 import psycopg
@@ -25,8 +26,10 @@ from setuppilot.llm.transport import Reply
 from setuppilot.llm.usage import Usage
 from setuppilot.redact import redact
 
-# Any fixed number works; it only has to be the same in every process that migrates.
+# Any fixed numbers work; each only has to be the same in every process that migrates.
 _MIGRATION_LOCK_ID = 20261101
+# Its own lock: a migration waiting on it would block LangGraph's concurrent index build.
+_CHECKPOINT_LOCK_ID = 20261102
 
 
 def open_pool(url: str, config: DatabaseConfig) -> ConnectionPool:
@@ -95,11 +98,21 @@ def open_checkpointer(url: str, config: DatabaseConfig) -> PostgresSaver:
         saver = PostgresSaver(pool)
         with pool.connection() as conn:
             # Two app starts at once would both create LangGraph's tables; let one go first.
-            conn.execute("select pg_advisory_lock(%s)", (_MIGRATION_LOCK_ID,))
+            # Poll, not wait in one query: a waiting query stalls the other's CREATE INDEX
+            # CONCURRENTLY forever. Setup runs on this connection, so a pool of one is enough.
+            deadline = monotonic() + config.connect_timeout_seconds
+            try_lock = "select pg_try_advisory_lock(%s) as is_locked"
+            while not conn.execute(try_lock, (_CHECKPOINT_LOCK_ID,)).fetchone()["is_locked"]:
+                if monotonic() > deadline:
+                    raise TimeoutError(
+                        f"Another SetupPilot start held database lock {_CHECKPOINT_LOCK_ID} "
+                        f"for over {timeout} seconds. Wait for it to finish, then try again."
+                    )
+                sleep(0.1)
             try:
-                saver.setup()
+                PostgresSaver(conn).setup()
             finally:
-                conn.execute("select pg_advisory_unlock(%s)", (_MIGRATION_LOCK_ID,))
+                conn.execute("select pg_advisory_unlock(%s)", (_CHECKPOINT_LOCK_ID,))
             tables = conn.execute(
                 "select tablename from pg_tables "
                 "where schemaname = 'public' and tablename like 'checkpoint%'"
@@ -107,7 +120,7 @@ def open_checkpointer(url: str, config: DatabaseConfig) -> PostgresSaver:
             for row in tables:
                 name = sql.Identifier(row["tablename"])
                 conn.execute(sql.SQL("alter table {} enable row level security").format(name))
-    except (PoolTimeout, psycopg.Error) as error:
+    except (PoolTimeout, psycopg.Error, TimeoutError) as error:
         pool.close()
         raise DatabaseUnavailable(
             "Could not set up saved run state in the database.", details=str(error)

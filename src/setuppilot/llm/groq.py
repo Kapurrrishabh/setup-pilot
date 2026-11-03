@@ -55,9 +55,17 @@ class GroqTransport:
         except (openai.APIConnectionError, openai.InternalServerError) as error:
             raise ServiceDown(str(error)) from error
         except openai.APIStatusError as error:
+            details = f"{model.name}: HTTP {error.status_code}: {error.message}"
+            # JSON mode sends this when the model's answer was not valid JSON. LLMUnavailable lets
+            # the small model try; the same model at temperature 0 would likely fail again.
+            if error.code == "json_validate_failed":
+                raise LLMUnavailable(
+                    "Groq could not give a well-formed answer this time. Try again.",
+                    details=details,
+                ) from error
             raise LLMRequestRejected(
                 _REJECTED_MESSAGES.get(error.status_code, "Groq refused the request."),
-                details=f"{model.name}: HTTP {error.status_code}: {error.message}",
+                details=details,
             ) from error
         choice = response.choices[0]
         return Reply(

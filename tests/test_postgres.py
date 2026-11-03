@@ -1,12 +1,14 @@
+from concurrent.futures import ThreadPoolExecutor
+
 import psycopg
 import pytest
 from psycopg.conninfo import make_conninfo
 from psycopg_pool import PoolTimeout
 
 from setuppilot.config import DatabaseConfig
-from setuppilot.db.postgres import PostgresRunStore, migrate, open_pool
+from setuppilot.db.postgres import PostgresRunStore, migrate, open_checkpointer, open_pool
 from setuppilot.errors import DatabaseUnavailable
-from tests.conftest import DATA_TABLES, TEST_DATABASE_URL
+from tests.conftest import DATA_TABLES, TEST_DATABASE_URL, TEST_DB_CONFIG
 
 FAST = DatabaseConfig(pool_max_size=1, connect_timeout_seconds=1)
 SOME_RUN = "00000000-0000-0000-0000-000000000000"
@@ -93,3 +95,46 @@ class BrokenPool:
 def test_database_errors_become_database_unavailable(error, message):
     with pytest.raises(DatabaseUnavailable, match=message):
         PostgresRunStore(BrokenPool(error)).get_run(SOME_RUN)
+
+
+def test_checkpointer_opens_with_a_pool_of_one_connection(pg_pool):
+    open_checkpointer(TEST_DATABASE_URL, FAST).conn.close()
+
+
+def test_two_first_starts_at_once_both_set_up_saved_run_state(pg_pool):
+    with pg_pool.connection() as conn:
+        conn.execute(
+            "drop table if exists checkpoint_migrations, checkpoints, checkpoint_blobs, "
+            "checkpoint_writes"
+        )
+    # A lock wait that never ends then fails the test instead of hanging it.
+    url = make_conninfo(TEST_DATABASE_URL, options="-c lock_timeout=20s")
+    with ThreadPoolExecutor(4) as starts:
+        savers = list(starts.map(lambda _: open_checkpointer(url, TEST_DB_CONFIG), range(4)))
+    for saver in savers:
+        saver.conn.close()
+
+
+def test_checkpoint_lock_held_too_long_is_reported_instead_of_waited_on(pg_pool):
+    from setuppilot.db.postgres import _CHECKPOINT_LOCK_ID
+
+    url = make_conninfo(TEST_DATABASE_URL, options="-c lock_timeout=5s")
+    with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as other_start:
+        other_start.execute("select pg_advisory_lock(%s)", (_CHECKPOINT_LOCK_ID,))
+        with pytest.raises(DatabaseUnavailable) as error:
+            open_checkpointer(url, FAST)
+    assert f"lock {_CHECKPOINT_LOCK_ID}" in error.value.details
+
+
+def test_migrate_does_not_wait_while_the_saved_run_state_is_being_set_up(pg_pool):
+    from setuppilot.db.postgres import _CHECKPOINT_LOCK_ID
+
+    # Sharing one lock lets migrate block LangGraph's concurrent index build and leave it invalid.
+    url = make_conninfo(TEST_DATABASE_URL, options="-c lock_timeout=2s")
+    with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as other_start:
+        other_start.execute("select pg_advisory_lock(%s)", (_CHECKPOINT_LOCK_ID,))
+        pool = open_pool(url, FAST)
+        try:
+            assert migrate(pool) == []
+        finally:
+            pool.close()

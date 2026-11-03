@@ -37,17 +37,21 @@ def test_ask_without_database_warns_that_nothing_is_saved(in_empty_project, monk
     fake = make_client(FakeTransport(reply("hi")))
     monkeypatch.setattr(cli, "build_llm_client", lambda settings, usage, cache, metrics: fake)
     main(["ask", "q"])
-    plain_lines = [
-        line for line in capsys.readouterr().err.splitlines() if not line.startswith("{")
-    ]
-    assert any(line.startswith("No database is set up.") for line in plain_lines)
+    err_lines = capsys.readouterr().err.splitlines()
+    assert any(line.startswith("No database is set up.") for line in err_lines)
 
 
-def test_db_check_without_database_fails(in_empty_project, capsys):
+def test_database_warning_is_printed_once_not_also_as_a_json_log_line(in_empty_project, capsys):
+    main(["runs"])
+    assert capsys.readouterr().err.count("No database is set up.") == 1
+
+
+def test_db_check_without_database_prints_the_plain_warning(in_empty_project, capsys):
     with pytest.raises(SystemExit) as exit_info:
         main(["db-check"])
+    err_lines = capsys.readouterr().err.splitlines()
     assert exit_info.value.code == 1
-    assert "SUPABASE_DB_URL is not set" in capsys.readouterr().err
+    assert any(line.startswith("No database is set up.") for line in err_lines)
 
 
 def test_db_check_writes_and_reads_a_run(in_empty_project, monkeypatch, capsys, empty_pg):

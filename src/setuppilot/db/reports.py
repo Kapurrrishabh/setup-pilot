@@ -42,7 +42,8 @@ def recent_runs(runs: RunStore, usage: UsageStore, limit: int) -> list[RunRow]:
 def metrics_summary(
     runs: RunStore, usage: UsageStore, metrics: MetricsStore, limit: int
 ) -> MetricsSummary:
-    """Numbers over the last `limit` runs; only finished runs count for success and averages."""
+    """Success, averages and errors use the finished runs among the last `limit`. Rate-limit
+    hits and small-model switches are all-time counts, chat questions included."""
     finished = [r for r in recent_runs(runs, usage, limit) if r.run.status in FINISHED_STATUSES]
 
     def average(values: list[float]) -> float | None:

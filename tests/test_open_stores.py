@@ -3,7 +3,7 @@ from setuppilot.db.postgres import PostgresRunStore
 from setuppilot.db.runs import InMemoryRunStore
 from setuppilot.db.stores import open_stores
 from setuppilot.llm.transport import Reply
-from tests.conftest import TEST_DB_CONFIG
+from tests.conftest import DATA_TABLES, TEST_DB_CONFIG
 from tests.test_config import REAL_CONFIG
 
 
@@ -39,3 +39,13 @@ def test_cache_written_through_one_open_is_read_by_the_next(monkeypatch, empty_p
     monkeypatch.setenv("SUPABASE_DB_URL", TEST_DATABASE_URL)
     open_stores(settings_with_fast_timeout()).cache.put("k", Reply("saved", 1, 1, False))
     assert open_stores(settings_with_fast_timeout()).cache.get("k").text == "saved"
+
+
+def test_new_database_gets_its_tables_when_the_stores_open(monkeypatch, empty_pg):
+    from tests.conftest import TEST_DATABASE_URL
+
+    with empty_pg.connection() as conn:
+        conn.execute(f"drop table {', '.join(DATA_TABLES)}, schema_migrations cascade")
+    monkeypatch.setenv("SUPABASE_DB_URL", TEST_DATABASE_URL)
+    runs = open_stores(settings_with_fast_timeout()).runs
+    assert runs.create_run("https://github.com/someone/demo", "/home/dev/work").status == "running"

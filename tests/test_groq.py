@@ -11,7 +11,7 @@ from setuppilot.llm.cache import InMemoryCache
 from setuppilot.llm.groq import GroqTransport, build_llm_client
 from setuppilot.llm.transport import RateLimited, ServiceDown
 from setuppilot.llm.usage import InMemoryUsageStore
-from tests.fakes import LIMITS
+from tests.fakes import LIMITS, make_client
 from tests.test_config import REAL_CONFIG
 
 REASONING_MODEL = GroqModel(name="openai/gpt-oss-120b", reasoning_effort="low", limits=LIMITS)
@@ -193,3 +193,16 @@ def test_without_tracing_the_groq_client_is_not_wrapped(monkeypatch):
         load_settings(REAL_CONFIG), InMemoryUsageStore(), InMemoryCache(), InMemoryMetricsStore()
     )
     assert wrapped == []
+
+
+def test_bad_json_from_the_big_model_is_answered_by_the_small_model():
+    def handler(request):
+        if json.loads(request.content)["model"] == "big-model":
+            error = {"message": "Failed to generate JSON.", "code": "json_validate_failed"}
+            return httpx2.Response(400, json={"error": error})
+        return httpx2.Response(200, json=completion(content='{"ok": true}'))
+
+    result = make_client(transport_for(handler)).complete(
+        QUESTION, choice="big_then_small", max_tokens=50, is_json=True, run_id=None
+    )
+    assert result.model == "small-model"

@@ -1,7 +1,9 @@
-"""Structured JSON logs to stderr and a local file, with secrets hidden."""
+"""Structured JSON logs to a local file (not the terminal), with secrets hidden."""
 
 import json
 import logging
+import sys
+import traceback
 from contextvars import ContextVar
 from datetime import UTC, datetime
 
@@ -33,14 +35,15 @@ class JsonFormatter(logging.Formatter):
 
 def setup_logging(config: LoggingConfig) -> None:
     config.file.parent.mkdir(parents=True, exist_ok=True)
-    # Handlers sit on the root logger so library logs (httpx, psycopg) are hidden and saved too.
+    # The handler sits on the root logger so library logs (httpx, psycopg) are hidden and saved too.
     root = logging.getLogger()
     for old in [h for h in root.handlers if isinstance(h.formatter, JsonFormatter)]:
         root.removeHandler(old)
         old.close()
-    formatter = JsonFormatter()
-    for handler in (logging.StreamHandler(), logging.FileHandler(config.file, encoding="utf-8")):
-        handler.setFormatter(formatter)
-        root.addHandler(handler)
+    handler = logging.FileHandler(config.file, encoding="utf-8")
+    handler.setFormatter(JsonFormatter())
+    # The stock handleError prints the record's raw arguments, which skips redact().
+    handler.handleError = lambda record: sys.stderr.write(redact(traceback.format_exc()))
+    root.addHandler(handler)
     root.setLevel(logging.WARNING)
     logging.getLogger(APP_LOGGER).setLevel(config.level)
