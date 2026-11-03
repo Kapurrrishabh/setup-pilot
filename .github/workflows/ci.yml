@@ -3,13 +3,22 @@ name: CI
 on:
   push:
   pull_request:
+  # Weekly, so a newly published problem in a locked package is seen even in a quiet week.
+  schedule: [{ cron: "0 6 * * 1" }]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    # A normal run takes under 2 minutes; this only stops a hung job.
+    timeout-minutes: 15
     strategy:
       matrix:
         python-version: ["3.12", "3.13"]
@@ -34,6 +43,43 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff check .
       - run: uv run ruff format --check .
+      - run: uv run mypy
       - run: uv run pytest --cov --cov-report=term-missing
       # The safety code must stay well tested: fail the build below 90% for it.
       - run: uv run coverage report --include="src/setuppilot/guardrails/*" --fail-under=90
+
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - name: Look for known problems in the locked packages
+        run: |
+          uv export --locked --all-groups --no-emit-project --no-hashes -o "$RUNNER_TEMP/requirements.txt"
+          uvx pip-audit@2.10.1 -r "$RUNNER_TEMP/requirements.txt" --no-deps --disable-pip --progress-spinner off
+      - name: Build the package and check the database migrations are inside it
+        run: |
+          uv build
+          unzip -l dist/*.whl | grep -q "setuppilot/db/migrations/002_chat.sql"
+
+  e2e:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --locked --group e2e
+      # No Groq key or database here, so this checks the setup flow and the no-key chat path.
+      - name: Start the web app
+        run: |
+          uv run setuppilot web > "$RUNNER_TEMP/web.log" 2>&1 &
+          for _ in $(seq 60); do curl -fsS -o /dev/null http://127.0.0.1:5005/ && exit 0; sleep 1; done
+          cat "$RUNNER_TEMP/web.log"; exit 1
+      - run: uv run --group e2e python scripts/browser_check.py --work "$RUNNER_TEMP/e2e"
+      - if: failure()
+        run: cat "$RUNNER_TEMP/web.log" logs/setuppilot.jsonl

@@ -8,7 +8,7 @@
 # Parts: basics groq supabase setup docker chat browser
 # Results go to test-results/<time>-<machine>/ . Send that folder to the team; it has no secrets.
 set -uo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 2
 
 ALL_PARTS="basics groq supabase setup docker chat browser"
 PARTS="${*:-$ALL_PARTS}"
@@ -36,6 +36,11 @@ check() {
 has_setting() { [ -n "${!1:-}" ] || grep -qE "^$1=.+" .env 2>/dev/null; }
 has_tool() { command -v "$1" > /dev/null 2>&1; }
 wants() { [[ " $PARTS " == *" $1 "* ]]; }
+# A fixed sleep is too short on a slow first start and wastes time on a fast one.
+wait_for_web() {
+  for _ in $(seq 60); do curl -fsS -o /dev/null http://127.0.0.1:5005/ && return 0; sleep 1; done
+  return 1
+}
 
 for part in $PARTS; do
   [[ " $ALL_PARTS " == *" $part "* ]] || { echo "Unknown part: $part. Pick from: $ALL_PARTS"; exit 2; }
@@ -50,6 +55,7 @@ if wants basics; then
   check "install from the lock file" uv sync --locked
   check "lint" uv run ruff check .
   check "format" uv run ruff format --check .
+  check "types" uv run mypy
   [ -n "${TEST_DATABASE_URL:-}" ] || info "TEST_DATABASE_URL is not set, so database tests are skipped (CI runs them)"
   check "unit tests" uv run pytest --cov
   check "guardrail coverage at least 90%" uv run coverage report --include="src/setuppilot/guardrails/*" --fail-under=90
@@ -143,7 +149,7 @@ EOF
     echo; echo "== can a container reach the web app? (known problem, see docs/SECURITY.md)"
     uv run setuppilot web > "$OUT/web-docker.log" 2>&1 &
     web_pid=$!
-    sleep 8
+    wait_for_web || fail "web app did not start (see $OUT/web-docker.log)"
     if docker run --rm --add-host host.docker.internal:host-gateway python:3.12-slim python -c \
       "import urllib.request as u; u.urlopen(u.Request('http://host.docker.internal:5005/', headers={'Host': '127.0.0.1:5005'}), timeout=5)" \
       > /dev/null 2>&1; then
@@ -181,9 +187,12 @@ if wants browser; then
   else
     uv run setuppilot web > "$OUT/web.log" 2>&1 &
     web_pid=$!
-    sleep 8
-    check "click through the web app in a browser" \
-      uv run --with playwright python scripts/browser_check.py --work "$WORK/browser"
+    if wait_for_web; then
+      check "click through the web app in a browser" \
+        uv run --group e2e python scripts/browser_check.py --work "$WORK/browser"
+    else
+      fail "web app did not start (see $OUT/web.log)"
+    fi
     kill "$web_pid" 2> /dev/null; wait "$web_pid" 2> /dev/null
     info "also click through it by hand in Firefox and Safari (see README)"
   fi

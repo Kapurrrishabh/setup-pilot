@@ -1,0 +1,24 @@
+repos:
+  - repo: local
+    hooks:
+      # Uses the ruff locked in uv.lock, so its version lives in one place.
+      - id: ruff-check
+        name: ruff check
+        entry: uv run --frozen ruff check --fix
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format
+        entry: uv run --frozen ruff format
+        language: system
+        types: [python]
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      # uv.lock is over the 500 KB default and is written by uv, not by hand.
+      - id: check-added-large-files
+        exclude: ^uv\.lock$
+      - id: detect-private-key
+      - id: check-yaml
+      - id: check-toml
+      - id: end-of-file-fixer

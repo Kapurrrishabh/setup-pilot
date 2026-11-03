@@ -1,0 +1,36 @@
+name: Bug report
+description: Something did not work the way the README says.
+body:
+  - type: markdown
+    attributes:
+      value: "Do not paste your .env, API keys or database URL. For security problems, use Security > Report a vulnerability instead."
+  - type: input
+    id: version
+    attributes:
+      label: SetupPilot version
+      description: "Output of `uv run setuppilot --version`"
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Operating system
+      placeholder: "macOS 15 (arm64)"
+  - type: input
+    id: repo
+    attributes:
+      label: Repo you tried to set up
+      placeholder: "https://github.com/owner/repo"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: "What you did, what you expected, and what you saw."
+    validations:
+      required: true
+  - type: textarea
+    id: timeline
+    attributes:
+      label: Run timeline
+      description: "Output of `uv run setuppilot show <run id>`"
+      render: text

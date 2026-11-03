@@ -3,6 +3,13 @@
 SetupPilot runs commands on your machine, for repos you may not know. These are the rules it
 follows, and the limits you should know about.
 
+## Report a security problem
+
+Please do not open a public issue. Use **Security > Report a vulnerability** on GitHub
+(https://github.com/Kapurrrishabh/setup-pilot/security/advisories/new). Say what you did, what
+happened, and your version (`uv run setuppilot --version`). We aim to reply within 7 days. Only
+the newest code on `main` gets fixes.
+
 ## What protects you
 
 - **You approve every command.** The flow pauses before each command (approve, reject or edit),
