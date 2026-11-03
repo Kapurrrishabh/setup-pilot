@@ -107,6 +107,16 @@ EOF
   fi
 fi
 
+# The Compose repo leaves its containers running; stop them so a test run leaves nothing behind.
+stop_compose_apps() {
+  has_tool docker || return 0
+  find "$WORK" -maxdepth 4 \( -name compose.yaml -o -name compose.yml -o -name docker-compose.yml \
+    -o -name docker-compose.yaml \) | while read -r file; do
+    docker compose -f "$file" down --volumes --remove-orphans > /dev/null 2>&1 \
+      && echo "Stopped the containers of $file"
+  done
+}
+
 # Prints the Total row of the newest eval table, and fails unless every repo was verified.
 all_verified() {
   local table; table="$(ls -t "$1"/setup-*.md 2>/dev/null | head -1)"
@@ -198,6 +208,7 @@ if wants browser; then
   fi
 fi
 
+stop_compose_apps
 echo; echo "======== summary ========"
 printf "%s" "$SUMMARY" | tee "$OUT/summary.txt"
 echo "Clones are in $WORK (delete it when done; on macOS Go may need chmod -R u+w first)."
