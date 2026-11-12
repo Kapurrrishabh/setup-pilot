@@ -46,13 +46,28 @@ def test_evaluator_picks_the_expected_stack():
     assert auto_answer(CASE, question) == {"choice": 1}
 
 
-def test_evaluator_skips_readme_suggestions_but_runs_its_own_commands():
-    readme = {"kind": "approve_command", "reason": "From the README: needed"}
-    own = {"kind": "approve_command", "reason": "Install the packages listed."}
-    assert (auto_answer(CASE, readme), auto_answer(CASE, own)) == (
+def test_evaluator_skips_the_ais_optional_steps_but_runs_every_needed_one():
+    optional = {"kind": "approve_command", "is_optional": True, "origin": "ai"}
+    needed = {"kind": "approve_command", "is_optional": False, "origin": "ai"}
+    assert (auto_answer(CASE, optional), auto_answer(CASE, needed)) == (
         {"action": "reject"},
         {"action": "approve"},
     )
+
+
+@pytest.mark.parametrize("kind", ["install_tool", "fix_by_hand"])
+def test_evaluator_never_installs_a_tool_or_waits_for_a_fix_by_hand(kind):
+    question = {"kind": kind, "command": "winget install --id Git.Git -e"}
+    assert auto_answer(CASE, question) == {"action": "stop"}
+
+
+def test_a_repo_whose_tool_is_missing_is_scored_not_crashed(tmp_path):
+    from tests.test_agent import NothingInstalled
+
+    agent, deps = make_agent(tmp_path, PIP_REPO, probe=NothingInstalled())
+    dest = tmp_path / "dest"
+    score = run_setup_case(CASE, agent, deps.runs, _NoUsage(), dest, False, "posix")
+    assert (score.is_verified, score.error_type, score.approvals) == (False, "PrereqMissing", 0)
 
 
 def test_a_pip_repo_scores_right_stack_right_install_and_verified(tmp_path):
@@ -208,4 +223,4 @@ class _DockerSpy:
 
     def start(self, repo_url, dest_dir, use_docker, request):
         self.use_docker.append(use_docker)
-        return Finished(self._runs.create_run(repo_url, dest_dir).id, "", False, None, None)
+        return Finished(self._runs.create_run(repo_url, dest_dir).id, "", "none", None, None)

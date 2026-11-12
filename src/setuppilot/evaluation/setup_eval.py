@@ -74,14 +74,16 @@ def _expected_install(url: str, value: Any, path: Path) -> dict[ExecTarget, tupl
 
 
 def auto_answer(case: SetupCase, question: dict) -> dict:
-    """The evaluator's answers: pick the expected stack, run SetupPilot's own commands and
-    checks, and skip README suggestions so every run is the same."""
+    """The evaluator's answers: pick the expected stack, run every step the setup needs (an AI
+    fix or the AI's wording of an install too), and skip the AI's optional steps and checks. It
+    never installs a tool or waits for a fix by hand, so it changes nothing outside the repo."""
     if question["kind"] == "choose_stack":
         labels = [o["label"] for o in question["options"]]
         wanted = f"{case.expected_stack}/{case.expected_manager}"
         return {"choice": labels.index(wanted) if wanted in labels else 0}
-    is_readme_tip = question["reason"].startswith("From the README")
-    return {"action": "reject" if is_readme_tip else "approve"}
+    if question["kind"] in ("install_tool", "fix_by_hand"):
+        return {"action": "stop"}
+    return {"action": "reject" if question["is_optional"] else "approve"}
 
 
 def run_setup_case(

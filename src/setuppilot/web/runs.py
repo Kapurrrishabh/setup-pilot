@@ -70,7 +70,8 @@ class RunManager:
         state = self._agent.peek(run_id)
         if not isinstance(state, Waiting) or state.question_id != question_id:
             raise RunNotWaiting("This question was already answered or has changed.")
-        command = state.question.get("command") if reply.get("action") == "approve" else None
+        is_running = reply.get("action") in ("approve", "install")
+        command = state.question.get("command") if is_running else None
         self._in_background(
             run_id, lambda: self._agent.answer(run_id, question_id, reply), command=command
         )
@@ -138,6 +139,7 @@ class RunManager:
             "report": state.report if isinstance(state, Finished) else None,
             "error": state.error if isinstance(state, Finished) else None,
             "is_verified": state.is_verified if isinstance(state, Finished) else False,
+            "verification": state.verification if isinstance(state, Finished) else None,
             "problem": problem,
         }
 

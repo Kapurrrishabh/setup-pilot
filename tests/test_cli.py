@@ -86,7 +86,7 @@ def test_db_check_writes_and_reads_a_run(in_empty_project, monkeypatch, capsys, 
         assert conn.execute("select count(*) as n from runs").fetchone()["n"] == 0
 
 
-def use_fake_agent(monkeypatch, source):
+def use_fake_agent(monkeypatch, source, *, probe=None, runner=None, llm=None, host="posix"):
     """The real CLI, with a fake clone, fake tools and a fake runner behind it."""
     from setuppilot.agent.driver import SetupAgent
     from setuppilot.agent.graph import AgentDeps
@@ -94,8 +94,9 @@ def use_fake_agent(monkeypatch, source):
 
     def make_fake_agent(settings, stores):
         deps = AgentDeps(
-            settings, stores.runs, None, fake_clone(source), AllInstalled(), FakeRunner(), "posix"
-        )
+            settings, stores.runs, llm, fake_clone(source), probe or AllInstalled(),
+            runner or FakeRunner(), host,
+        )  # fmt: skip
         return SetupAgent(deps, stores.checkpointer)
 
     monkeypatch.setattr(cli, "make_agent", make_fake_agent)
@@ -151,6 +152,40 @@ def test_cli_asks_which_stack_and_skips_bad_answers(in_empty_project, monkeypatc
     )
     out = capsys.readouterr().out
     assert code == 0 and "1. python/pip" in out and "Command: npm install" in out
+
+
+def test_cli_offers_to_install_a_missing_tool_then_goes_on(in_empty_project, monkeypatch, capsys):
+    from tests.test_agent import FakeRunner, InstalledAfter
+
+    runner = FakeRunner()
+    probe = InstalledAfter(runner, "uv", "winget install --id astral-sh.uv")
+    source = make_repo(in_empty_project / "source", {"requirements.txt": ""})
+    use_fake_agent(monkeypatch, source, probe=probe, runner=runner, host="windows")
+    (in_empty_project / "dest").mkdir()
+    argv = ["run", "https://github.com/someone/demo", "dest"]
+    code = run_cli_with_answers(monkeypatch, ["e", "i", "q"], argv)
+    out = capsys.readouterr().out
+    # "e" is not an answer to an install question, so it is asked again.
+    assert code == 1 and "uv is missing (try 1 of 3)" in out
+    assert "SetupPilot can run: winget install --id astral-sh.uv" in out
+    assert runner.texts[0].startswith("winget install") and "Command: uv venv .venv" in out
+
+
+def test_cli_shows_what_to_fix_by_hand_and_stops_when_asked(in_empty_project, monkeypatch, capsys):
+    from tests.fakes import ai_project, analysis_reply, diagnosis_reply
+    from tests.test_agent import FakeRunner
+
+    diagnosis = diagnosis_reply(user_action="Install the C++ build tools, then press done.")
+    llm = make_client(FakeTransport(analysis_reply(ai_project()), diagnosis, reply("Report.")))
+    runner = FakeRunner(failing={"uv venv .venv"})
+    source = make_repo(in_empty_project / "source", {"requirements.txt": ""})
+    use_fake_agent(monkeypatch, source, runner=runner, llm=llm)
+    (in_empty_project / "dest").mkdir()
+    argv = ["run", "https://github.com/someone/demo", "dest"]
+    code = run_cli_with_answers(monkeypatch, ["a", "s"], argv)
+    out = capsys.readouterr().out
+    assert code == 1 and "What to do: Install the C++ build tools" in out
+    assert "you stopped to fix it by hand" in out
 
 
 def test_resume_with_an_unknown_run_id_says_so(in_empty_project, monkeypatch, capsys):

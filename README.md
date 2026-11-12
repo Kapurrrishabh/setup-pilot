@@ -101,9 +101,11 @@ the setup really works, and report. It says "verified" only when those checks pa
 - Install scripts can still run code from the repo. Use `--docker` for repos you do not trust,
   from the terminal with the web app closed (a container can reach the web app; see
   [docs/SECURITY.md](docs/SECURITY.md)).
-- The LLM only reads the README for extra steps and writes the report. It can suggest a
-  command, but that command goes through the allowlist and your approval like any other.
-- Without a Groq key the run still works; it skips the README tips and the AI report.
+- The AI reads a summary of the repo, proposes a plan and explains failed commands. Every
+  command it proposes goes through the allowlist and your approval like any other, and only
+  SetupPilot's own checks can say "verified" (see [docs/SECURITY.md](docs/SECURITY.md)).
+- Without a Groq key, or with `agent.use_ai_planning: false`, the run still works with
+  SetupPilot's own plans; it skips the AI's plan, its fixes and the AI report.
 - A paused run is saved in Supabase, so it survives a restart. Without a database it is kept
   in memory only.
 - Docker mode supports pip, uv, npm, yarn, bun, Go, Cargo, Bundler, Maven and Gradle repos (and
@@ -188,7 +190,8 @@ must end in `_test`, because the tests empty every table. CI starts its own Post
 ## Limits and known problems
 
 - **Groq free tier**: daily limits per model. When they run out, the setup still works (it skips
-  the README tips and the AI summary); the chatbot says "Daily limit reached, try again later".
+  the AI's plan, its fixes and the AI summary); the chatbot says "Daily limit reached, try again
+  later".
 - **Supported stacks**: Python (pip, uv, Poetry, Pipenv, PDM, conda), Node (npm, yarn, pnpm, bun),
   Go, Rust, Ruby, Java (Maven, Gradle) and Docker Compose. A repo with only a Dockerfile, or with
   its real project in a sub-folder (monorepos), is not set up automatically; it says so.

@@ -24,6 +24,7 @@
       <span id="question-docker" class="badge" data-tone="info" hidden>Docker mode</span>
     </div>
     <p id="question-reason"></p>
+    <ul id="question-facts" hidden></ul>
     <p id="question-edit-error" class="callout bad" role="alert" hidden></p>
     <p id="question-edited" class="callout ok" hidden>This is your edited command. It passed the safety check. Approve it to run it, or edit it again.</p>
     <div id="command-box">
@@ -37,8 +38,12 @@
     <div id="question-options" class="options"></div>
     <div id="question-actions" class="actions">
       <button type="button" data-action="approve" aria-keyshortcuts="a">Approve <kbd aria-hidden="true">A</kbd></button>
+      <button type="button" data-action="install" aria-keyshortcuts="i">Install it <kbd aria-hidden="true">I</kbd></button>
+      <button type="button" data-action="done" aria-keyshortcuts="d">I fixed it, try again <kbd aria-hidden="true">D</kbd></button>
+      <button type="button" data-action="recheck" class="secondary" aria-keyshortcuts="c">Check again <kbd aria-hidden="true">C</kbd></button>
       <button type="button" data-action="reject" class="secondary" aria-keyshortcuts="r">Reject <kbd aria-hidden="true">R</kbd></button>
       <button type="button" data-action="edit" class="secondary" aria-keyshortcuts="e" aria-expanded="false" aria-controls="edit-box">Edit… <kbd aria-hidden="true">E</kbd></button>
+      <button type="button" data-action="stop" class="secondary" aria-keyshortcuts="s">Stop the run <kbd aria-hidden="true">S</kbd></button>
     </div>
     <p id="keys-hint" class="hint keys-hint"></p>
     <form id="edit-box" class="edit-box" hidden>

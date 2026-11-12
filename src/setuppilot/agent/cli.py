@@ -4,7 +4,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from setuppilot.agent.driver import Finished, SetupAgent, Stopped, Waiting
+from setuppilot.agent.driver import Finished, SetupAgent, Stopped, Waiting, answers_for
 from setuppilot.agent.wiring import build_agent
 from setuppilot.config import Settings
 from setuppilot.db.stores import Stores
@@ -68,6 +68,28 @@ def _question(waiting: Waiting, ask: Ask) -> dict | None:
                 return None
             if answer.isdigit() and 1 <= int(answer) <= len(question["options"]):
                 return {"choice": int(answer) - 1}
+    if question["kind"] == "install_tool":
+        print(f"\n{question['tool']} is missing (try {question['round']}): {question['problem']}")
+        if question["reason"]:
+            print(f"  It is needed: {question['reason']}")
+        if question["command"]:
+            admin = "  (it may ask for admin rights)" if question["needs_admin"] else ""
+            print(f"  SetupPilot can run: {question['command']}{admin}")
+        else:
+            print(f"  Install it yourself: {question['manual']}")
+        if question["note"]:
+            print(f"  Note: {question['note']}")
+        if last := question["last_install"]:
+            print(f"  Last try: {last['command']} ended with exit code {last['exit_code']}.")
+        return _pick(question, ask)
+    if question["kind"] == "fix_by_hand":
+        print(f"\n`{question['command']}` failed with exit code {question['exit_code']}.")
+        print(f"  The AI's guess (it may be wrong): {question['diagnosis']['explanation']}")
+        if question["user_action"]:
+            print(f"  What to do: {question['user_action']}")
+        for refused in question["refused"]:
+            print(f"  Not run by SetupPilot: {refused['command']} ({refused['reason']})")
+        return _pick(question, ask)
     print(f"\nStep {question['step']}: {question['reason']}")
     print(f"  Command: {question['command']}" + ("  (in Docker)" if question["in_docker"] else ""))
     print(f"  Warning: {question['warning']}")
@@ -83,6 +105,18 @@ def _question(waiting: Waiting, ask: Ask) -> dict | None:
             return {"action": "edit", "command": ask("New command: ")}
 
 
+def _pick(question: dict, ask: Ask) -> dict | None:
+    """Ask for one of the question's answers by its first letter, or q to pause."""
+    answers = {answer[0]: answer for answer in answers_for(question)}
+    words = ", ".join(f"[{key}]{answer[1:]}" for key, answer in answers.items())
+    while True:
+        answer = ask(f"{words}, or [q] to stop for now: ").strip().lower()
+        if answer == "q":
+            return None
+        if answer in answers:
+            return {"action": answers[answer]}
+
+
 def resolve_destination(dest: str) -> str:
     return str(Path(dest).expanduser().resolve())
 
@@ -91,5 +125,5 @@ def _llm_or_none(settings: Settings, stores: Stores) -> LLMClient | None:
     try:
         return build_llm_client(settings, stores.usage, stores.cache, stores.metrics)
     except LLMUnavailable as error:
-        print(f"{error.message} README tips and the AI report will be skipped.", file=sys.stderr)
+        print(f"{error.message} The AI's reading, fixes and report are skipped.", file=sys.stderr)
         return None

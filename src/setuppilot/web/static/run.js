@@ -13,7 +13,7 @@ const ANSWER_LAG_MS = 3000;
 const OUTPUT_ERRORS = ["InstallFailed", "CommandTimeout"];
 const CARRY_ON_TEXT = "Carrying on from the last saved point";
 const TONE_WORDS = { ok: "Done", warn: "Needs a look", bad: "Failed" };
-const ACTIONS = { a: "approve", r: "reject", e: "edit" };
+const ANSWER_WORDS = { approve: "approve", reject: "reject", edit: "edit", install: "install", recheck: "check again", done: "done", stop: "stop" };
 
 let view = null;
 let questionId = null;
@@ -78,7 +78,7 @@ function stepLabel(name) {
 }
 
 function currentPhase(v) {
-  if (v.question) return labels.steps[v.question.kind === "choose_stack" ? "choose_stack" : "approve"].phase;
+  if (v.question) return labels.steps[labels.question_steps[v.question.kind]].phase;
   // Every run ends with the report step, so a stopped run is placed at the step that failed.
   const steps = v.steps.filter((step) => step.name !== "report");
   const last = steps.findLast((step) => !step.is_ok) ?? steps.at(-1);
@@ -129,8 +129,8 @@ function renderNow(v) {
   const isJustAnswered = answered !== null && v.steps.length <= answered.atStep;
   // Once the command's own step is saved, the run has moved on to whatever comes next.
   const command = v.running_command ?? answered?.command;
-  if (command && (isJustAnswered || last?.name === "approve")) showNow("Running", command);
-  else if (isJustAnswered) showNow(labels.steps.approve.then);
+  if (command && (isJustAnswered || ["approve", "offer_install"].includes(last?.name))) showNow("Running", command);
+  else if (isJustAnswered) showNow(labels.steps[labels.question_steps[answered.kind]].then);
   else if (v.steps.length === carryOnAtStep) showNow(CARRY_ON_TEXT);
   else showNow(last ? labels.steps[last.name]?.then ?? "Working" : labels.first_activity);
 }
@@ -162,18 +162,56 @@ function renderQuestion(v) {
   questionShownAt = Date.now();
   closeEdit(false);
   const isChoice = question.kind === "choose_stack";
+  const isCommand = question.kind === "approve_command";
+  // The answers the server takes for this question; install only when SetupPilot has a command.
+  const answers = isChoice ? [] : labels.answers[question.kind].filter((answer) => answer !== "install" || question.command);
+  const buttons = [...$("question-actions").querySelectorAll("button")];
+  buttons.forEach((button) => (button.hidden = !answers.includes(button.dataset.action)));
+  const keys = buttons.filter((button) => !button.hidden).map((button) => `${button.getAttribute("aria-keyshortcuts").toUpperCase()} ${ANSWER_WORDS[button.dataset.action]}`);
   $("question-actions").hidden = isChoice;
   $("keys-hint").textContent = isChoice
     ? "Keys, while this box has focus: press the number of an option. They do nothing while you type."
-    : "Keys, while this box has focus: A approve, R reject, E edit. They do nothing while you type.";
-  $("command-box").hidden = isChoice;
-  $("question-docker").hidden = isChoice || !question.in_docker;
+    : `Keys, while this box has focus: ${keys.join(", ")}. They do nothing while you type.`;
+  $("command-box").hidden = isChoice || (!isCommand && !question.command);
+  $("question-note").hidden = !isCommand;
+  $("question-docker").hidden = !isCommand || !question.in_docker;
   $("question-options").replaceChildren();
+  showFacts([]);
   $("question-edited").hidden = true;
   $("question-edit-error").hidden = true;
   if (isChoice) renderChoice(question);
-  else renderCommand(question);
+  else if (isCommand) renderCommand(question);
+  else if (question.kind === "install_tool") renderInstall(question);
+  else renderFixByHand(question);
   $("question-title").focus();
+}
+
+function showFacts(facts) {
+  $("question-facts").replaceChildren(...facts.map((fact) => element("li", fact)));
+  $("question-facts").hidden = facts.length === 0;
+}
+
+function renderInstall(question) {
+  $("question-title").textContent = question.command ? `${question.tool} is missing: install it now?` : `${question.tool} is missing: install it, then check again`;
+  $("question-reason").textContent = question.reason ? `${question.problem} It is needed: ${question.reason}.` : question.problem;
+  $("question-command").textContent = question.command ?? "";
+  const facts = question.command ? [] : [`How to install it on ${question.os}: ${question.manual}`];
+  if (question.command && question.needs_admin) facts.push("It may ask for admin rights in another window.");
+  if (question.note) facts.push(question.note);
+  const last = question.last_install;
+  if (last) facts.push(`Last try: ${last.command} ended with exit code ${last.exit_code ?? "none"}. ${last.output}`.trim());
+  facts.push(`Try ${question.round}. Stop ends the run.`);
+  showFacts(facts);
+}
+
+function renderFixByHand(question) {
+  $("question-title").textContent = "A step failed: fix it by hand?";
+  $("question-reason").replaceChildren(...withCode(`\`${question.command}\` failed with exit code ${question.exit_code}.`));
+  const facts = [`The AI's guess (it may be wrong): ${question.diagnosis.explanation}`];
+  if (question.user_action) facts.push(`What to do: ${question.user_action}`);
+  question.refused.forEach((refused) => facts.push(`Not run by SetupPilot: ${refused.command} (${refused.reason})`));
+  facts.push("Press done when it is fixed, and SetupPilot runs the step again.");
+  showFacts(facts);
 }
 
 function stackName(label) {
@@ -209,6 +247,7 @@ function renderChoice(question) {
 function renderCommand(question) {
   $("question-title").textContent = `Command ${question.step}: ${question.is_check ? "run this check?" : "run this command?"}`;
   $("question-reason").textContent = question.reason;
+  if (question.diagnosis) showFacts([`The AI's guess at what went wrong (it may be wrong): ${question.diagnosis.explanation}`]);
   $("question-command").textContent = question.command;
   $("edit-command").value = question.command;
   if (question.edit_error) {
@@ -252,7 +291,8 @@ function renderOutcome(v, previous) {
     $("outcome-message").textContent = "Nothing more was run.";
     setActions([["Set up this repo again", again], ["See all runs", "/runs"]]);
   } else {
-    const error = v.error || { error_type: "VerifyFailed", message: "SetupPilot's checks did not pass.", details: "" };
+    const unchecked = v.verification === "ai_only" ? `${labels.verification.ai_only}. They all passed.` : "SetupPilot's checks did not pass.";
+    const error = v.error || { error_type: "VerifyFailed", message: unchecked, details: "" };
     $("report-title").textContent = error.error_type === "VerifyFailed" ? "Setup not verified" : labels.errors[error.error_type] ?? error.error_type;
     $("outcome-message").replaceChildren(...withCode(error.message));
     details = error.details || "";
@@ -290,13 +330,13 @@ function tellNews(v, status, previous) {
 }
 
 async function send(reply) {
-  const command = reply.action === "approve" ? view.question.command : null;
-  answered = { questionId, atStep: view.steps.length, command, at: Date.now() };
+  const command = ["approve", "install"].includes(reply.action) ? view.question.command : null;
+  answered = { questionId, atStep: view.steps.length, command, at: Date.now(), kind: view.question.kind };
   if (reply.action === "edit") sentEdit = reply.command.trim();
   $("question").hidden = true;
   showStatus("running");
   if (command) showNow("Running", command);
-  else showNow(labels.steps.approve.then);
+  else showNow(labels.steps[labels.question_steps[view.question.kind]].then);
   $("now").focus();
   try {
     await postJson(`/api/runs/${runId}/answer`, { ...reply, question_id: questionId });
@@ -361,9 +401,8 @@ document.addEventListener("keydown", (event) => {
   // Single keys act only inside the question (WCAG 2.1.4), so a stray key elsewhere answers nothing.
   if (!$("question").contains(event.target) || event.target.closest("input, textarea, select, [contenteditable]")) return;
   const key = event.key.toLowerCase();
-  const button = $("question-actions").hidden
-    ? $("question-options").querySelector(`[aria-keyshortcuts="${key}"]`)
-    : ACTIONS[key] && $("question-actions").querySelector(`[data-action="${ACTIONS[key]}"]`);
+  const box = $("question-actions").hidden ? $("question-options") : $("question-actions");
+  const button = box.querySelector(`[aria-keyshortcuts="${key}"]:not([hidden])`);
   if (!button) return;
   event.preventDefault();
   button.click();
