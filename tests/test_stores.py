@@ -59,6 +59,16 @@ def test_new_run_reads_back_as_running(stores):
     )
 
 
+def test_a_run_keeps_the_github_user_it_belongs_to(stores):
+    runs, _, _ = stores
+    # Past 2**31, so the column must hold any GitHub id.
+    signed_in = runs.create_run(REPO, "/home/dev/work", 2**40).id
+    public = runs.create_run(REPO, "/home/dev/work", None).id
+    got = [runs.get_run(i) for i in (signed_in, public)]
+    assert [(r.owner_github_id, r.access) for r in got] == [(2**40, "github"), (None, "public")]
+    assert sorted(r.access for r in runs.list_runs(10)) == ["github", "public"]
+
+
 def test_failed_run_keeps_error_and_message(stores):
     runs, _, _ = stores
     run_id = runs.create_run(REPO, "/home/dev/work").id

@@ -4,10 +4,10 @@ import json
 import secrets
 import time
 from collections.abc import Callable, Iterator
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 from flask import Flask, Response, abort, jsonify, render_template, request, session
 from werkzeug.exceptions import HTTPException
@@ -15,14 +15,23 @@ from werkzeug.exceptions import HTTPException
 from setuppilot.agent.driver import ANSWERS_BY_KIND
 from setuppilot.chat.bot import MAX_QUESTION_CHARS, ChatSession, RepoChatbot
 from setuppilot.chat.embed import Embedder
-from setuppilot.chat.repos import index_github_repo
+from setuppilot.chat.repos import index_for_chat
 from setuppilot.config import Settings
-from setuppilot.db.reports import HISTORY_LIMIT, metrics_summary, recent_runs
+from setuppilot.db.reports import HISTORY_LIMIT, RunRow, metrics_summary, recent_runs
+from setuppilot.db.runs import no_such_run
 from setuppilot.db.stores import Stores
 from setuppilot.errors import NotFound, SetupPilotError
 from setuppilot.guardrails.commands import INSTALL_SCRIPT_WARNING, MAX_COMMAND_CHARS
 from setuppilot.llm.groq import is_tracing_on
+from setuppilot.tools.clone import GitHubAccess, RepoAccess
 from setuppilot.tools.github_url import parse_github_url
+from setuppilot.web.github_auth import (
+    add_github_routes,
+    bound_user_id,
+    require_binding,
+    require_user_id,
+    sent_key,
+)
 from setuppilot.web.labels import PAGE_LABELS, STATUS_LABELS, duration_text, error_label, repo_name
 from setuppilot.web.runs import RunManager
 from setuppilot.web.security import protect
@@ -41,6 +50,7 @@ class WebServices:
     make_chatbot: Callable[[], RepoChatbot] | None
     llm_problem: str | None
     preflight: Callable[[str], list[dict[str, Any]]]
+    github: GitHubAccess
 
 
 class BadInput(SetupPilotError):
@@ -50,8 +60,9 @@ class BadInput(SetupPilotError):
 def create_app(services: WebServices) -> Flask:
     app = Flask(__name__)
     token = protect(app, services.settings.web)
-    chats: dict[tuple[str, str], ChatSession] = {}
-    stores, settings = services.stores, services.settings
+    chats: dict[tuple[str, str, int | None], ChatSession] = {}
+    stores, settings, github = services.stores, services.settings, services.github
+    add_github_routes(app, github, settings.github.max_repo_pages)
     app.jinja_env.globals["page_labels"] = PAGE_LABELS
     app.jinja_env.filters |= {
         "status_label": lambda status: STATUS_LABELS[status],
@@ -71,6 +82,14 @@ def create_app(services: WebServices) -> Flask:
 
     def error_page(code: int, title: str, message: str, details: str):
         return page("error.html", title=title, message=message, details=details), code
+
+    def check_run_access(run_id: str) -> int | None:
+        """The GitHub user a signed-in run belongs to, or None for a public run. Such a run's
+        repo, folder and steps go only to that user; to anyone else there is no such run."""
+        owner = stores.runs.get_run(run_id).owner_github_id
+        if owner is not None and require_user_id(github) != owner:
+            raise no_such_run(run_id)
+        return owner
 
     @app.errorhandler(SetupPilotError)
     def friendly_error(error: SetupPilotError):
@@ -103,30 +122,40 @@ def create_app(services: WebServices) -> Flask:
     @app.post("/api/runs")
     def start_run():
         body = _json_body()
+        owner = require_user_id(github) if _access(body) == "github" else None
         url = parse_github_url(_text(body, "repo_url", 300, "the GitHub URL")).url
         folder = Path(_text(body, "dest_dir", 500, "the folder")).expanduser().resolve()
         if not folder.is_dir():
             raise BadInput("That folder does not exist.", details=f"Create {folder} first.")
-        run_id = services.runs.start(url, str(folder), body.get("use_docker") is True)
+        use_docker = body.get("use_docker") is True
+        run_id = services.runs.start(url, str(folder), use_docker, owner, _subdir(body))
         return jsonify(run_id=run_id)
 
     @app.get("/runs/<run_id>")
     def run_page(run_id: str):
         run = stores.runs.get_run(run_id)
+        # A page load cannot send the binding key, so a signed-in run's page leaves out its repo
+        # and folder; the page script reads them with the key.
+        if run.access == "github":
+            run = replace(run, repo_url="", dest_dir="")
         return page("run.html", run=run, warning=INSTALL_SCRIPT_WARNING)
 
     @app.get("/api/runs/<run_id>")
     def run_view(run_id: str):
+        check_run_access(run_id)
         return jsonify(services.runs.view(run_id))
 
     @app.get("/api/runs/<run_id>/events")
     def run_events(run_id: str):
-        stores.runs.get_run(run_id)
+        owner, key = check_run_access(run_id), sent_key()
 
         def stream() -> Iterator[str]:
             # Each event is the whole view, sent when it changes; the page needs no other state.
             last, quiet_since = None, time.monotonic()
             while True:
+                # Signing out ends what this browser may see of a signed-in run.
+                if owner is not None and bound_user_id(github, key) != owner:
+                    return
                 view = services.runs.view(run_id)
                 text = json.dumps(view, default=str)
                 if text != last:
@@ -145,6 +174,7 @@ def create_app(services: WebServices) -> Flask:
 
     @app.post("/api/runs/<run_id>/answer")
     def answer(run_id: str):
+        check_run_access(run_id)
         body = _json_body()
         services.runs.answer(
             run_id, _text(body, "question_id", 100, "the question id"), _reply(body)
@@ -153,20 +183,45 @@ def create_app(services: WebServices) -> Flask:
 
     @app.post("/api/runs/<run_id>/cancel")
     def cancel(run_id: str):
-        stores.runs.get_run(run_id)
+        check_run_access(run_id)
         services.runs.cancel(run_id)
         return jsonify(ok=True)
 
     @app.post("/api/runs/<run_id>/continue")
     def carry_on(run_id: str):
+        check_run_access(run_id)
         services.runs.carry_on(run_id)
         return jsonify(ok=True)
 
     @app.get("/runs")
     def history_page():
-        rows = recent_runs(stores.runs, stores.usage, HISTORY_LIMIT)
+        # Signed-in runs come from /api/github/runs, which needs the binding key.
+        rows = runs_owned_by(None)
         statuses = {row.run.id: services.runs.shown_status(row.run) for row in rows}
         return page("history.html", rows=rows, statuses=statuses, history_limit=HISTORY_LIMIT)
+
+    @app.get("/api/github/runs")
+    def github_runs():
+        viewer = require_user_id(github)
+        return jsonify(
+            runs=[
+                {
+                    "id": row.run.id,
+                    "repo_url": row.run.repo_url,
+                    "status": services.runs.shown_status(row.run),
+                    "created_at": row.run.created_at.isoformat(),
+                    "seconds": row.seconds,
+                    "tokens": row.tokens,
+                    "error_type": row.run.error_type,
+                    "message": row.run.message,
+                }
+                for row in runs_owned_by(viewer)
+            ]
+        )
+
+    def runs_owned_by(owner_github_id: int | None) -> list[RunRow]:
+        rows = recent_runs(stores.runs, stores.usage, HISTORY_LIMIT)
+        return [row for row in rows if row.run.owner_github_id == owner_github_id]
 
     @app.get("/metrics")
     def metrics_page():
@@ -192,13 +247,25 @@ def create_app(services: WebServices) -> Flask:
 
     @app.get("/chat")
     def chat_page():
+        # Private repos come from /api/chat/repos, which needs the binding key.
         repos = stores.chat_index.repos(viewer_github_id=None)
         return page("chat.html", repos=repos, llm_problem=services.llm_problem)
 
+    @app.get("/api/chat/repos")
+    def chat_repos():
+        viewer = bound_user_id(github, sent_key())
+        return jsonify(repos=stores.chat_index.repos(viewer_github_id=viewer))
+
     @app.post("/api/chat/index")
-    def index_for_chat():
-        url = _text(_json_body(), "repo_url", 300, "the GitHub URL")
-        key, result = index_github_repo(settings, url, services.embedder, stores.chat_index)
+    def index_repo_for_chat():
+        body = _json_body()
+        access = _access(body)
+        if access == "github":
+            require_binding(github)
+        url = _text(body, "repo_url", 300, "the GitHub URL")
+        key, result = index_for_chat(
+            settings, url, github, access, services.embedder, stores.chat_index
+        )
         return jsonify(repo=key, chunks=result.chunks, dropped=result.dropped)
 
     @app.post("/api/chat/ask")
@@ -209,8 +276,9 @@ def create_app(services: WebServices) -> Flask:
         repo = _text(body, "repo", 200, "the repo")
         question = _text(body, "question", MAX_QUESTION_CHARS, "a question")
         session.setdefault("chat_id", secrets.token_urlsafe(16))
+        viewer = bound_user_id(github, sent_key())
         chat = chats.setdefault(
-            (session["chat_id"], repo), ChatSession(repo, viewer_github_id=None)
+            (session["chat_id"], repo, viewer), ChatSession(repo, viewer_github_id=viewer)
         )
         answer = services.make_chatbot().ask(chat, question)
         return jsonify(asdict(answer))
@@ -230,6 +298,24 @@ def _text(body: dict[str, Any], name: str, max_chars: int, label: str) -> str:
     if not isinstance(value, str) or not value.strip() or len(value) > max_chars:
         raise BadInput(f"Please fill in {label}.", details=f"Use 1 to {max_chars} characters.")
     return value.strip()
+
+
+def _access(body: dict[str, Any]) -> RepoAccess:
+    """Public unless the page asks for the GitHub sign-in: the token is used only when asked."""
+    access = body.get("access", "public")
+    if access not in get_args(RepoAccess):
+        raise BadInput(
+            "Choose a public repo, or one from your GitHub sign-in.",
+            details=f"access must be 'public' or 'github', not {access!r}.",
+        )
+    return access
+
+
+def _subdir(body: dict[str, Any]) -> str | None:
+    subdir = body.get("subdir")
+    if subdir is not None and not isinstance(subdir, str):
+        raise BadInput("The sub-folder must be text.", details="Send a folder name, or null.")
+    return (subdir or "").strip() or None
 
 
 def _reply(body: dict[str, Any]) -> dict[str, Any]:

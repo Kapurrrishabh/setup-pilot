@@ -69,8 +69,6 @@ function render(next) {
   renderOutcome(next, previous);
   if (next.problem) showError(next.problem);
   tellNews(next, status, previous);
-  // A cancelled run can still be saving the step it was busy with, so wait for that too.
-  if (isOver(next) && !next.is_busy) events.close();
 }
 
 function stepLabel(name) {
@@ -429,16 +427,64 @@ setInterval(() => {
   if (busySince !== null) $("now-time").textContent = clock(Date.now() - busySince);
 }, 1000);
 
-const events = new EventSource(`/api/runs/${runId}/events`);
-events.onmessage = (message) => render(JSON.parse(message.data));
-// The app makes a new page token each time it starts, so after a restart the page must reload.
-events.onopen = () => lostContact && window.location.reload();
-events.onerror = () => {
-  if (view !== null && isOver(view)) return;
-  lostContact = true;
-  const isGone = events.readyState === EventSource.CLOSED;
-  showError({
-    message: isGone ? "Lost contact with SetupPilot. Reload the page." : "Lost contact with SetupPilot. Trying again…",
-    details: "If you stopped the app, start it again with: uv run setuppilot web",
-  });
-};
+// Read with fetch, not EventSource: EventSource cannot send headers, and a run read through a
+// GitHub sign-in needs this browser's key. Provisional: 3 s, about what EventSource waited.
+const RETRY_MS = 3000;
+
+class LostContact extends Error {}
+
+function lost() {
+  throw new LostContact();
+}
+
+// The server ends the stream once the run is over (and a cancelled run has saved its last step).
+async function readEvents() {
+  const key = localStorage.getItem("setuppilot-github-binding");
+  const headers = key ? { "X-SetupPilot-Binding": key } : {};
+  const response = await fetch(`/api/runs/${runId}/events`, { headers }).catch(lost);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new RequestError(data.error || { message: `Could not follow this run (${response.status}).` });
+  }
+  // The app makes a new page token each time it starts, so after a restart the page must reload.
+  if (lostContact) window.location.reload();
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read().catch(lost);
+    if (done) return;
+    buffer += decoder.decode(value, { stream: true });
+    let end;
+    while ((end = buffer.indexOf("\n\n")) >= 0) {
+      const event = buffer.slice(0, end);
+      buffer = buffer.slice(end + 2);
+      // Pings start with ":" and carry nothing.
+      if (event.startsWith("data: ")) render(JSON.parse(event.slice("data: ".length)));
+    }
+  }
+}
+
+async function followEvents() {
+  for (;;) {
+    try {
+      await readEvents();
+      if (view !== null && isOver(view)) return;
+    } catch (error) {
+      // The server refused (a sign-in is needed, or there is no such run): trying again cannot help.
+      if (error instanceof RequestError) {
+        showError(error);
+        return;
+      }
+      if (!(error instanceof LostContact)) throw error;
+      lostContact = true;
+      showError({
+        message: "Lost contact with SetupPilot. Trying again…",
+        details: "If you stopped the app, start it again with: uv run setuppilot web",
+      });
+    }
+    await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
+  }
+}
+
+followEvents();

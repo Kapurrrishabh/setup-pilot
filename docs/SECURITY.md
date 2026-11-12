@@ -81,7 +81,8 @@ the newest code on `main` gets fixes.
 
 ## GitHub sign-in
 
-The parts below are built and tested; the web app's sign-in page is not built yet.
+The parts below are built and tested with fakes; the sign-in buttons on the web pages are not
+built yet, and no sign-in has been tried against a real GitHub App.
 
 - **Your own GitHub App, read only.** Sign-in uses a GitHub App that you register on your own
   account, with only Contents: Read-only and Metadata: Read-only, installed on the repos you pick.
@@ -100,6 +101,25 @@ The parts below are built and tested; the web app's sign-in page is not built ye
   `gnome-keyring-daemon --unlock`.
 - **Public reads stay public.** Reading a repo you typed in never sends your token. Download links
   for private repos hold a short-lived key and are never logged; the log file also masks them.
+- **Tied to the browser that signed in.** When you finish signing in, only the page that started
+  it gets a key, once. It keeps the key in its own storage and sends it with every request that
+  uses your sign-in; SetupPilot keeps only a hash of it, next to the token. A cookie would not be
+  enough: the dev servers SetupPilot starts on 127.0.0.1 get this app's cookies too. Runs and chat
+  repos read through your sign-in are left out of the Runs and Chat pages. Their names, folders
+  and steps go only to your GitHub user, in the browser you signed in from; someone who signs in
+  later as another GitHub user does not see them. Signing out works from any tab.
+- **Only type a code SetupPilot showed you.** Sign-in gives you a code to type at
+  github.com/login/device. A page, README or program that shows you such a code is trying to get
+  your sign-in.
+- **Signed-in clones.** git gets the token only as a header for that one repo, through git's own
+  environment settings: never in the URL, the command line, logs or `.git/config`. Redirects are
+  off for these clones, and git trace and config settings from your environment are removed. A
+  sub-folder clone downloads only that folder's files. Sizes are checked from GitHub's file list
+  before anything is downloaded; if GitHub cannot be asked about a public repo, a whole-repo
+  clone checks its own files instead, and a sub-folder clone is refused.
+- **Private repo text** you set up or ask about is sent to Groq, and kept in your database if
+  Supabase is set up. Chat answers about private repos are never kept in the shared answer cache.
+  The README tips and report of a signed-in setup run still are, and stay there after sign-out.
 - **Sign-out** removes the token here first, then asks GitHub to cancel it. If GitHub does not
   confirm, remove SetupPilot under GitHub Settings > Applications > Authorized GitHub Apps.
 - **What it cannot stop.** On macOS, any script run by the same Python can read the keychain

@@ -5,7 +5,6 @@ from urllib.parse import parse_qs
 import httpx
 import pytest
 
-from setuppilot.config import GitHubApp
 from setuppilot.github import device_flow
 from setuppilot.github.api import GitHubAuthEnded, GitHubError
 from setuppilot.github.device_flow import (
@@ -19,9 +18,8 @@ from setuppilot.github.device_flow import (
     parse_grant,
     parse_poll_reply,
 )
-from tests.github_fakes import FakeGitHub, ok
+from tests.github_fakes import APP, FakeGitHub, ok
 
-APP = GitHubApp(client_id="Iv23liTest", app_slug="setuppilot-test")
 NOW = 1_800_000_000.0
 CODE_REPLY = {
     "device_code": "3584d83530557fdd1f46af8289938c8ef79f9dc5",

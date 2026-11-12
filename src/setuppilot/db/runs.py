@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
 
 from setuppilot.errors import NotFound
+from setuppilot.tools.clone import RepoAccess
 
 RunStatus = Literal["running", "waiting_approval", "succeeded", "failed", "cancelled"]
 FINISHED_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
@@ -17,11 +18,23 @@ class Run:
     id: str
     repo_url: str
     dest_dir: str
+    # The GitHub user who started it through their sign-in, so only they may see it; None when
+    # the repo was read as public.
+    owner_github_id: int | None
     status: RunStatus
     error_type: str | None
     message: str | None
     created_at: datetime
     finished_at: datetime | None
+
+    @property
+    def access(self) -> RepoAccess:
+        return run_access(self.owner_github_id)
+
+
+def run_access(owner_github_id: int | None) -> RepoAccess:
+    """A run that belongs to a GitHub user reads its repo through their sign-in."""
+    return "public" if owner_github_id is None else "github"
 
 
 @dataclass(frozen=True)
@@ -40,7 +53,9 @@ class Step:
 
 
 class RunStore(Protocol):
-    def create_run(self, repo_url: str, dest_dir: str) -> Run: ...
+    def create_run(
+        self, repo_url: str, dest_dir: str, owner_github_id: int | None = None
+    ) -> Run: ...
     def get_run(self, run_id: str) -> Run: ...
     def list_runs(self, limit: int) -> list[Run]: ...
     def set_status(
@@ -60,9 +75,17 @@ class InMemoryRunStore:
         self._runs: dict[str, Run] = {}
         self._steps: list[Step] = []
 
-    def create_run(self, repo_url: str, dest_dir: str) -> Run:
+    def create_run(self, repo_url: str, dest_dir: str, owner_github_id: int | None = None) -> Run:
         run = Run(
-            str(uuid.uuid4()), repo_url, dest_dir, "running", None, None, datetime.now(UTC), None
+            str(uuid.uuid4()),
+            repo_url,
+            dest_dir,
+            owner_github_id,
+            "running",
+            None,
+            None,
+            datetime.now(UTC),
+            None,
         )
         self._runs[run.id] = run
         return run

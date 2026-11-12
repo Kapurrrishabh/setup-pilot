@@ -199,6 +199,7 @@ def _run_from_row(row: dict) -> Run:
         str(row["id"]),
         row["repo_url"],
         row["dest_dir"],
+        row["owner_github_id"],
         row["status"],
         row["error_type"],
         row["message"],
@@ -211,12 +212,12 @@ class PostgresRunStore:
     def __init__(self, pool: Pool) -> None:
         self._pool = pool
 
-    def create_run(self, repo_url: str, dest_dir: str) -> Run:
+    def create_run(self, repo_url: str, dest_dir: str, owner_github_id: int | None = None) -> Run:
         with _connection(self._pool) as conn:
             (row,) = conn.execute(
-                "insert into runs (repo_url, dest_dir, status) values (%s, %s, 'running') "
-                "returning *",
-                (repo_url, dest_dir),
+                "insert into runs (repo_url, dest_dir, owner_github_id, status) "
+                "values (%s, %s, %s, 'running') returning *",
+                (repo_url, dest_dir, owner_github_id),
             ).fetchall()
         return _run_from_row(row)
 

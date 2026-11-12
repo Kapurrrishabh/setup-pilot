@@ -9,7 +9,7 @@ from typing import Any
 
 from setuppilot.agent.driver import Finished, SetupAgent, Stopped, Waiting
 from setuppilot.db.reports import HISTORY_LIMIT
-from setuppilot.db.runs import FINISHED_STATUSES, Run, RunStore
+from setuppilot.db.runs import FINISHED_STATUSES, Run, RunStore, run_access
 from setuppilot.errors import SetupPilotError
 from setuppilot.guardrails.process_tree import ProcessTree
 from setuppilot.logging_setup import run_id_var
@@ -55,13 +55,21 @@ class RunManager:
         # stopped those). Any other 'running' run belongs to another process, like the terminal.
         self._known = {r.id for r in runs.list_runs(HISTORY_LIMIT) if r.status == "running"}
 
-    def start(self, repo_url: str, dest_dir: str, use_docker: bool) -> str:
-        run = self._runs.create_run(repo_url, dest_dir)
+    def start(
+        self,
+        repo_url: str,
+        dest_dir: str,
+        use_docker: bool,
+        owner_github_id: int | None,
+        subdir: str | None,
+    ) -> str:
+        """owner_github_id is the signed-in GitHub user who starts the run, or None for a public
+        repo. The clone uses the sign-in only for a run that belongs to someone."""
+        request = CloneRequest(run_access(owner_github_id), subdir)
+        run = self._runs.create_run(repo_url, dest_dir, owner_github_id)
         self._in_background(
             run.id,
-            lambda: self._agent.begin(
-                run.id, repo_url, dest_dir, use_docker, CloneRequest("public", None)
-            ),
+            lambda: self._agent.begin(run.id, repo_url, dest_dir, use_docker, request),
             command=None,
         )
         return run.id

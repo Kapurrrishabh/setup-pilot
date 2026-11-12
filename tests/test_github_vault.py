@@ -6,7 +6,7 @@ from keyring.backends import fail
 from keyring.errors import KeyringLocked, PasswordDeleteError, PasswordSetError
 
 from setuppilot.github.api import GitHubAuthEnded, GitHubError, GitHubUser
-from setuppilot.github.device_flow import TokenGrant, parse_grant
+from setuppilot.github.device_flow import TokenGrant
 from setuppilot.github.vault import (
     KEYRING_SERVICE,
     KEYRING_USER,
@@ -14,33 +14,14 @@ from setuppilot.github.vault import (
     NO_KEYRING_NOTICE,
     GitHubCredentials,
     TokenVault,
-    binding_hash,
     new_binding,
     pick_keyring,
 )
 from tests.fakes import FakeClock
-from tests.github_fakes import MemoryKeyring
+from tests.github_fakes import EIGHT_HOURS, SIX_MONTHS, MemoryKeyring, credentials, grant
 
-EIGHT_HOURS = 28800
-SIX_MONTHS = 15897600
 # Windows keeps at most 2,560 bytes per credential, as UTF-16 (2 bytes a character).
 WINDOWS_CREDENTIAL_CHARS = 1280
-
-
-def grant(token: str, refresh: str, now: float, lives: int = EIGHT_HOURS) -> TokenGrant:
-    reply = {
-        "access_token": token,
-        "token_type": "bearer",
-        "expires_in": lives,
-        "refresh_token": refresh,
-        "refresh_token_expires_in": SIX_MONTHS,
-    }
-    return parse_grant(reply, now)
-
-
-def credentials(grant: TokenGrant, key: str = "browser-key") -> GitHubCredentials:
-    user = GitHubUser(login="octocat", id=583231)
-    return GitHubCredentials(grant=grant, user=user, binding_hash=binding_hash(key))
 
 
 class FakeRefresh:

@@ -11,13 +11,15 @@ from setuppilot.db.stores import Stores
 from setuppilot.errors import LLMUnavailable
 from setuppilot.llm.client import LLMClient
 from setuppilot.llm.groq import build_llm_client
+from setuppilot.tools.clone import public_github
 
 Ask = Callable[[str], str]
 
 
 def make_agent(settings: Settings, stores: Stores) -> SetupAgent:
     # The terminal has no Cancel button (Ctrl+C stops the command), so nothing is tracked.
-    return build_agent(settings, stores, _llm_or_none(settings, stores), on_start=lambda t: None)
+    llm = _llm_or_none(settings, stores)
+    return build_agent(settings, stores, llm, on_start=lambda t: None, github=public_github())
 
 
 def interact(

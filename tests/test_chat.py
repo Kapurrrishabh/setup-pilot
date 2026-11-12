@@ -808,11 +808,12 @@ def test_no_history_is_sent_when_history_turns_is_zero(indexed):
 
 def test_unfinished_chat_clone_is_refused_not_indexed(tmp_path):
     from setuppilot.chat.repos import chat_repo_folder
+    from setuppilot.tools.clone import public_github
 
     settings = SETTINGS.model_copy(update={"chat": CHAT.model_copy(update={"repos_dir": tmp_path})})
     make_repo(tmp_path / "someone" / "demo", {".git/HEAD": "ref"})
     with pytest.raises(CloneFailed, match="unfinished clone"):
-        chat_repo_folder(settings, "https://github.com/someone/demo")
+        chat_repo_folder(settings, "https://github.com/someone/demo", public_github())
 
 
 def test_indexed_clone_keeps_its_commit_for_source_links(tmp_path):

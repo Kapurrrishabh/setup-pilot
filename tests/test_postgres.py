@@ -26,24 +26,32 @@ def test_migrate_twice_runs_nothing_the_second_time(pg_pool):
 
 
 def test_migrate_on_an_empty_database_creates_every_table(pg_pool):
-    assert migrate_from_scratch(pg_pool) == ["001_init.sql", "002_chat.sql", "003_chat_v2.sql"]
+    assert migrate_from_scratch(pg_pool) == [
+        "001_init.sql", "002_chat.sql", "003_chat_v2.sql", "004_run_access.sql"
+    ]  # fmt: skip
+
+
+def migrate_an_older_version(pg_pool, tmp_path, monkeypatch, names):
+    """An empty database migrated by an older version, which had only these migrations. Undo
+    the monkeypatch to migrate the rest."""
+    from setuppilot.db import postgres
+
+    old_package = tmp_path / "db"
+    (old_package / "migrations").mkdir(parents=True)
+    for name in names:
+        sql = resources.files("setuppilot.db").joinpath("migrations", name).read_text()
+        (old_package / "migrations" / name).write_text(sql)
+    with pg_pool.connection() as conn:
+        conn.execute(f"drop table {', '.join(DATA_TABLES)}, schema_migrations cascade")
+    monkeypatch.setattr(postgres.resources, "files", lambda package: old_package)
+    migrate(pg_pool)
 
 
 def test_upgrading_a_database_with_a_v1_chat_index_empties_it_for_the_new_columns(
     pg_pool, tmp_path, monkeypatch
 ):
-    from setuppilot.db import postgres
-
-    old_package = tmp_path / "db"
-    (old_package / "migrations").mkdir(parents=True)
-    for name in ("001_init.sql", "002_chat.sql"):
-        sql = resources.files("setuppilot.db").joinpath("migrations", name).read_text()
-        (old_package / "migrations" / name).write_text(sql)
-    with pg_pool.connection() as conn:
-        conn.execute(f"drop table {', '.join(DATA_TABLES)}, schema_migrations cascade")
     # The version before v2 had only these two migrations; it has indexed one repo.
-    monkeypatch.setattr(postgres.resources, "files", lambda package: old_package)
-    migrate(pg_pool)
+    migrate_an_older_version(pg_pool, tmp_path, monkeypatch, ["001_init.sql", "002_chat.sql"])
     with pg_pool.connection() as conn:
         conn.execute("insert into chat_repos (key, url, chunk_count) values ('o/r', 'u', 1)")
         conn.execute(
@@ -52,7 +60,20 @@ def test_upgrading_a_database_with_a_v1_chat_index_empties_it_for_the_new_column
             ("[" + ",".join(["0.1"] * 384) + "]",),
         )
     monkeypatch.undo()
-    assert migrate(pg_pool) == ["003_chat_v2.sql"]
+    assert migrate(pg_pool) == ["003_chat_v2.sql", "004_run_access.sql"]
+
+
+def test_runs_saved_before_run_access_existed_read_back_as_public(pg_pool, tmp_path, monkeypatch):
+    old = ["001_init.sql", "002_chat.sql", "003_chat_v2.sql"]
+    migrate_an_older_version(pg_pool, tmp_path, monkeypatch, old)
+    with pg_pool.connection() as conn:
+        (row,) = conn.execute(
+            "insert into runs (repo_url, dest_dir, status) values ('u', 'd', 'running') "
+            "returning id"
+        ).fetchall()
+    monkeypatch.undo()
+    assert migrate(pg_pool) == ["004_run_access.sql"]
+    assert PostgresRunStore(pg_pool).get_run(str(row["id"])).access == "public"
 
 
 def test_row_level_security_is_on_for_every_table(pg_pool):
