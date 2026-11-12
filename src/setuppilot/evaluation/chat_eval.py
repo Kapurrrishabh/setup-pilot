@@ -56,7 +56,7 @@ class ChatScore:
 
 
 def load_chat_cases(path: Path) -> list[ChatCase]:
-    data = yaml.safe_load(path.read_text())
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
     cases = []
     for repo in data["repos"]:
         for q in repo["questions"]:
@@ -172,7 +172,8 @@ def load_done(path: Path) -> list[ChatScore]:
     if not path.exists():
         return []
     try:
-        return [ChatScore(**json.loads(line)) for line in path.read_text().splitlines() if line]
+        lines = path.read_text(encoding="utf-8").splitlines()
+        return [ChatScore(**json.loads(line)) for line in lines if line]
     except TypeError as error:
         raise ResultsOutdated(
             f"{path} was written by an older version of the chat evaluation.",
@@ -183,5 +184,5 @@ def load_done(path: Path) -> list[ChatScore]:
 
 def save_score(path: Path, score: ChatScore) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a") as file:
+    with path.open("a", encoding="utf-8") as file:
         file.write(json.dumps(asdict(score)) + "\n")

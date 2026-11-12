@@ -108,7 +108,7 @@ def run_chat_eval(
     note = f"{_RETRIEVAL_NOTE}\n\n" if mode == "retrieval" else ""
     results_dir.mkdir(parents=True, exist_ok=True)
     report = f"{heading}\n\n{done_line}\n\n{note}{table}\n"
-    (results_dir / f"chat-{mode}-{stamp}.md").write_text(report)
+    (results_dir / f"chat-{mode}-{stamp}.md").write_text(report, encoding="utf-8")
     print(table)
     return scores
 

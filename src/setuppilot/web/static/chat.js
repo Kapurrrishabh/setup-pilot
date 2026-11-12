@@ -16,21 +16,28 @@ function addMessage(kind, text) {
   return box;
 }
 
-function sourceLink(repo, path) {
-  const link = element("a", path, "chip");
-  link.href = `https://github.com/${repo}/blob/HEAD/${path.split("/").map(encodeURIComponent).join("/")}`;
+// Citation links come from the server, but only github.com links are followed.
+function citationChip(citation) {
+  const lines = citation.start_line === citation.end_line ? `${citation.start_line}` : `${citation.start_line}-${citation.end_line}`;
+  // The repo card (a summary of the manifests) has no line numbers.
+  const label = citation.start_line ? `${citation.path}:${lines}` : citation.path;
+  if (!/^https:\/\/github\.com\//.test(citation.url || "")) return element("span", label, "chip");
+  const link = element("a", label, "chip");
+  link.href = citation.url;
   link.target = "_blank";
   link.rel = "noreferrer";
   return link;
 }
 
-function addAnswer(answer, repo) {
+function addAnswer(answer) {
   const box = addMessage("bot", answer.text);
-  if (answer.sources.length) {
-    const chips = element("div", undefined, "chips");
-    chips.append(element("span", "Sources:", "chips-label"), ...answer.sources.map((path) => sourceLink(repo, path)));
-    box.append(chips);
+  const chips = element("div", undefined, "chips");
+  if (answer.citations && answer.citations.length) {
+    chips.append(element("span", "Sources:", "chips-label"), ...answer.citations.map(citationChip));
+  } else if (answer.status === "not_found" && answer.looked_at && answer.looked_at.length) {
+    chips.append(element("span", "Closest files:", "chips-label"), ...answer.looked_at.map((path) => element("span", path, "chip")));
   }
+  if (chips.childElementCount) box.append(chips);
   messages.scrollTop = messages.scrollHeight;
 }
 
@@ -63,7 +70,7 @@ askForm.addEventListener("submit", async (event) => {
   try {
     const answer = await postJson("/api/chat/ask", { repo, question });
     pending.remove();
-    addAnswer(answer, repo);
+    addAnswer(answer);
     tokens += answer.tokens;
     document.getElementById("tokens").textContent = tokens.toLocaleString();
   } catch (error) {
@@ -100,7 +107,7 @@ indexForm.addEventListener("submit", async (event) => {
     [...repoSelect.options].filter((option) => option.value === "").forEach((option) => option.remove());
     if (![...repoSelect.options].some((option) => option.value === data.repo)) repoSelect.prepend(new Option(data.repo, data.repo));
     repoSelect.value = data.repo;
-    const cut = data.dropped ? ` ${data.dropped} more were left out because the repo is large.` : "";
+    const cut = data.dropped ? ` ${data.dropped} files were left out because the repo is large.` : "";
     addMessage("note", `Indexed ${data.repo}: ${data.chunks} parts of its files are ready.${cut} Ask a question below.`);
     indexForm.reset();
   } catch (error) {

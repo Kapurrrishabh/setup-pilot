@@ -186,7 +186,7 @@ def migrate(pool: Pool) -> list[str]:
         done = {row["version"] for row in conn.execute("select version from schema_migrations")}
         for file in files:
             if file.name.endswith(".sql") and file.name not in done:
-                conn.execute(file.read_text())
+                conn.execute(file.read_text(encoding="utf-8"))
                 conn.execute("insert into schema_migrations (version) values (%s)", (file.name,))
                 ran.append(file.name)
     return ran
