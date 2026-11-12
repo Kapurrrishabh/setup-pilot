@@ -359,8 +359,9 @@ def _readme_tips(
             readme_tips_messages(stack, planned, readme),
             choice="big_then_small",
             max_tokens=deps.settings.agent.plan_max_tokens,
-            is_json=True,
+            response_format="json",
             run_id=state["run_id"],
+            is_cacheable=True,
         )
     except SetupPilotError as error:
         return [], [], StepNote(""), f"README tips skipped: {error.message} {error.details}"
@@ -573,8 +574,9 @@ def _report(deps: AgentDeps, state: RunState) -> dict:
                 report_messages(facts),
                 choice="big_then_small",
                 max_tokens=deps.settings.agent.report_max_tokens,
-                is_json=False,
+                response_format="text",
                 run_id=state["run_id"],
+                is_cacheable=True,
             )
             if result.text.strip():
                 report = f"{_verdict(facts)}\n\n{result.text.strip()}\n\nDetails:\n{report}"

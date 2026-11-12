@@ -4,10 +4,10 @@ from pathlib import Path
 
 from setuppilot.chat.bot import IndexResult, index_repo
 from setuppilot.chat.embed import Embedder
-from setuppilot.chat.index import ChunkIndex
+from setuppilot.chat.index import ChatRepo, ChunkIndex
 from setuppilot.config import Settings
 from setuppilot.errors import CloneFailed
-from setuppilot.tools.clone import check_github_repo, clone_repo
+from setuppilot.tools.clone import _git, check_github_repo, clone_repo
 from setuppilot.tools.github_url import parse_github_url
 
 # Written only after a clone fully works, so a refused or cut-off clone is never indexed.
@@ -40,9 +40,11 @@ def repo_key(url: str) -> str:
 def index_github_repo(
     settings: Settings, url: str, embedder: Embedder, index: ChunkIndex
 ) -> tuple[str, IndexResult]:
-    """Clone (if needed) and index one repo for the chatbot. Returns its key and the result."""
+    """Clone (if needed) and index one public repo for the chatbot. Returns its key and the
+    result."""
     key, clean_url, folder = chat_repo_folder(settings, url)
-    result = index_repo(
-        key, clean_url, folder, settings.chat, settings.repo.max_tree_chars, embedder, index
-    )
+    advice = f"The clone in {folder} may be broken. Delete it yourself, then index it again."
+    commit = _git(["-C", str(folder), "rev-parse", "HEAD"], settings.repo, "git rev-parse", advice)
+    repo = ChatRepo(key, clean_url, commit.strip(), owner_github_id=None)
+    result = index_repo(repo, folder, settings.chat, settings.repo.max_tree_chars, embedder, index)
     return key, result

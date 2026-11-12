@@ -3,6 +3,7 @@
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import asdict
 from datetime import UTC, date, datetime, time, timedelta
 from importlib import resources
 from time import monotonic, sleep
@@ -17,7 +18,8 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool, PoolTimeout
 
 from setuppilot.chat.chunks import Chunk
-from setuppilot.chat.index import Hit, unknown_repo
+from setuppilot.chat.index import ChatRepo, Hit, IndexedRepo, SearchResults, unknown_repo
+from setuppilot.chat.search import tokens
 from setuppilot.config import DatabaseConfig
 from setuppilot.db.metrics import MetricName
 from setuppilot.db.runs import FINISHED_STATUSES, Run, RunStatus, Step, no_such_run
@@ -417,41 +419,94 @@ class PostgresChunkIndex:
         self._pool = pool
 
     def replace_repo(
-        self, repo_key: str, url: str, chunks: list[Chunk], vectors: list[list[float]]
+        self, indexed: IndexedRepo, chunks: list[Chunk], vectors: list[list[float]]
     ) -> None:
+        repo = indexed.repo
         rows = [
-            (repo_key, c.path, c.section, c.text.replace("\x00", ""), _vector_text(v))
+            (repo.key, c.path, c.section, c.text.replace("\x00", ""), c.start_line, c.end_line,
+             c.kind, " ".join(tokens(c.search_text)), _vector_text(v))
             for c, v in zip(chunks, vectors, strict=True)
-        ]
+        ]  # fmt: skip
+        card = Jsonb([asdict(c) for c in indexed.card])
         # One transaction: a reader sees the old index or the new one, never half of each.
         with _connection(self._pool) as conn:
             # Two indexing jobs for the same repo take turns instead of clashing.
-            conn.execute("select pg_advisory_xact_lock(hashtext(%s))", (repo_key,))
-            conn.execute("delete from chat_repos where key = %s", (repo_key,))
+            conn.execute("select pg_advisory_xact_lock(hashtext(%s))", (repo.key,))
+            conn.execute("delete from chat_repos where key = %s", (repo.key,))
             conn.execute(
-                "insert into chat_repos (key, url, chunk_count) values (%s, %s, %s)",
-                (repo_key, url, len(rows)),
-            )
+                "insert into chat_repos (key, url, chunk_count, commit_sha, embedding_model, card, "
+                "owner_github_id) values (%s, %s, %s, %s, %s, %s, %s)",
+                (repo.key, repo.url, len(rows), repo.commit_sha, indexed.embedding_model, card,
+                 repo.owner_github_id),
+            )  # fmt: skip
             with conn.cursor() as cursor:
                 cursor.executemany(
-                    "insert into chat_chunks (repo_key, path, section, text, embedding) "
-                    "values (%s, %s, %s, %s, %s::vector)",
+                    "insert into chat_chunks (repo_key, path, section, text, start_line, end_line, "
+                    "kind, words, embedding) values (%s, %s, %s, %s, %s, %s, %s, %s, %s::vector)",
                     rows,
                 )
 
-    def search(self, repo_key: str, vector: list[float], limit: int) -> list[Hit]:
+    def repo(self, repo_key: str, viewer_github_id: int | None) -> IndexedRepo:
         with _connection(self._pool) as conn:
-            if not conn.execute("select 1 from chat_repos where key = %s", (repo_key,)).fetchone():
-                raise unknown_repo(repo_key)
+            row = conn.execute(
+                "select * from chat_repos where key = %s "
+                "and (owner_github_id is null or owner_github_id = %s)",
+                (repo_key, viewer_github_id),
+            ).fetchone()
+        if row is None:
+            raise unknown_repo(repo_key)
+        repo = ChatRepo(row["key"], row["url"], row["commit_sha"], row["owner_github_id"])
+        card = tuple(Chunk(**c) for c in row["card"])
+        return IndexedRepo(repo, row["embedding_model"], card)
+
+    def repos(self, viewer_github_id: int | None) -> list[str]:
+        with _connection(self._pool) as conn:
             rows = conn.execute(
-                "select path, section, text, 1 - (embedding <=> %s::vector) as similarity "
-                "from chat_chunks where repo_key = %s "
-                "order by embedding <=> %s::vector limit %s",
+                "select key from chat_repos "
+                "where owner_github_id is null or owner_github_id = %s order by key",
+                (viewer_github_id,),
+            ).fetchall()
+        return [r["key"] for r in rows]
+
+    def search(
+        self,
+        repo_key: str,
+        viewer_github_id: int | None,
+        vector: list[float],
+        terms: list[str],
+        limit: int,
+    ) -> SearchResults:
+        # Terms hold only letters, digits and dots (see tokens), so quoting each one is safe.
+        query = " | ".join(f"'{term}'" for term in terms)
+        with _connection(self._pool) as conn:
+            is_visible = conn.execute(
+                "select 1 from chat_repos where key = %s "
+                "and (owner_github_id is null or owner_github_id = %s)",
+                (repo_key, viewer_github_id),
+            ).fetchone()
+            if not is_visible:
+                raise unknown_repo(repo_key)
+            by_vector = conn.execute(
+                "select path, section, text, start_line, end_line, kind, "
+                "1 - (embedding <=> %s::vector) as score from chat_chunks "
+                "where repo_key = %s order by embedding <=> %s::vector limit %s",
                 (_vector_text(vector), repo_key, _vector_text(vector), limit),
             ).fetchall()
-        return [Hit(Chunk(r["path"], r["section"], r["text"]), r["similarity"]) for r in rows]
+            by_words = []
+            if terms:
+                by_words = conn.execute(
+                    "select path, section, text, start_line, end_line, kind, "
+                    "ts_rank_cd(fts, query) as score from chat_chunks, "
+                    "to_tsquery('simple', %s) as query "
+                    "where repo_key = %s and fts @@ query order by score desc limit %s",
+                    (query, repo_key, limit),
+                ).fetchall()
+        return SearchResults(_hits(by_vector), _hits(by_words))
 
-    def repos(self) -> list[str]:
-        with _connection(self._pool) as conn:
-            rows = conn.execute("select key from chat_repos order by key").fetchall()
-        return [r["key"] for r in rows]
+
+def _hits(rows: list[DictRow]) -> list[Hit]:
+    return [
+        Hit(Chunk(r["path"], r["section"], r["text"], r["start_line"], r["end_line"], r["kind"]),
+            r["score"])
+        for r in rows
+    ]  # fmt: skip

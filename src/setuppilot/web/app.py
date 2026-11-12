@@ -191,7 +191,8 @@ def create_app(services: WebServices) -> Flask:
 
     @app.get("/chat")
     def chat_page():
-        return page("chat.html", repos=stores.chat_index.repos(), llm_problem=services.llm_problem)
+        repos = stores.chat_index.repos(viewer_github_id=None)
+        return page("chat.html", repos=repos, llm_problem=services.llm_problem)
 
     @app.post("/api/chat/index")
     def index_for_chat():
@@ -207,7 +208,9 @@ def create_app(services: WebServices) -> Flask:
         repo = _text(body, "repo", 200, "the repo")
         question = _text(body, "question", MAX_QUESTION_CHARS, "a question")
         session.setdefault("chat_id", secrets.token_urlsafe(16))
-        chat = chats.setdefault((session["chat_id"], repo), ChatSession(repo))
+        chat = chats.setdefault(
+            (session["chat_id"], repo), ChatSession(repo, viewer_github_id=None)
+        )
         answer = services.make_chatbot().ask(chat, question)
         return jsonify(asdict(answer))
 

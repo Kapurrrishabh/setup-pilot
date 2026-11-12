@@ -10,15 +10,25 @@ from setuppilot.errors import (
 )
 from setuppilot.llm.cache import InMemoryCache
 from setuppilot.llm.client import DAILY_LIMIT_MESSAGE, backoff_delay
-from setuppilot.llm.transport import RateLimited, ServiceDown
+from setuppilot.llm.transport import JsonSchema, RateLimited, ServiceDown
 from setuppilot.llm.usage import InMemoryUsageStore
 from tests.fakes import FakeClock, FakeTransport, groq_config, make_client, reply
 
 QUESTION = [{"role": "user", "content": "What does this repo do?"}]
 
 
-def ask(client, choice="big", run_id="run-1", messages=QUESTION, is_json=False):
-    return client.complete(messages, choice=choice, max_tokens=100, is_json=is_json, run_id=run_id)
+def ask(
+    client, choice="big", run_id="run-1", messages=QUESTION, response_format="text",
+    is_cacheable=True,
+):  # fmt: skip
+    return client.complete(
+        messages,
+        choice=choice,
+        max_tokens=100,
+        response_format=response_format,
+        run_id=run_id,
+        is_cacheable=is_cacheable,
+    )
 
 
 def per_minute_429(retry_after=7.0):
@@ -227,7 +237,7 @@ def test_json_and_text_answers_to_the_same_prompt_are_cached_separately():
     transport = FakeTransport(reply("text"), reply('{"a": 1}'))
     client = make_client(transport)
     ask(client)
-    assert ask(client, is_json=True).text == '{"a": 1}'
+    assert ask(client, response_format="json").text == '{"a": 1}'
 
 
 def test_rate_limit_hits_and_small_model_switches_are_counted():
@@ -246,3 +256,33 @@ def test_answer_is_kept_when_saving_a_metric_fails():
     transport = FakeTransport(per_minute_429(1.0), reply("ok"))
     client = make_client(transport, metrics=MetricsThatLoseTheDatabase())
     assert ask(client).text == "ok"
+
+
+def schema(name, **properties):
+    return JsonSchema(name, {"type": "object", "properties": properties})
+
+
+def test_answers_for_two_schemas_are_cached_separately():
+    transport = FakeTransport(reply('{"a": 1}'), reply('{"b": 2}'))
+    client = make_client(transport)
+    ask(client, response_format=schema("answer", a={"type": "integer"}))
+    second = ask(client, response_format=schema("answer", b={"type": "integer"}))
+    assert (second.text, len(transport.calls)) == ('{"b": 2}', 2)
+
+
+def test_a_long_schema_counts_toward_the_size_of_the_request():
+    limits = groq_config().big.limits.model_copy(update={"tokens_per_minute": 400})
+    config = groq_config(big=groq_config().big.model_copy(update={"limits": limits}))
+    client = make_client(FakeTransport(reply("ok")), config=config)
+    long_schema = schema("answer", **{f"field_{n}": {"type": "string"} for n in range(40)})
+    with pytest.raises(LLMRequestRejected, match="too long"):
+        ask(client, response_format=long_schema)
+
+
+def test_prompt_that_may_not_be_cached_is_neither_saved_nor_read_back():
+    transport = FakeTransport(reply("a"), reply("b"), reply("c"))
+    client = make_client(transport)
+    ask(client, is_cacheable=False)
+    ask(client, is_cacheable=False)
+    # Had either answer been saved, this one would come from the cache.
+    assert ask(client).text == "c"

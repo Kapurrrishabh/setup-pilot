@@ -13,7 +13,14 @@ from setuppilot.db.metrics import MetricsStore
 from setuppilot.errors import LLMRequestRejected, LLMUnavailable
 from setuppilot.llm.cache import LLMCache
 from setuppilot.llm.client import LLMClient
-from setuppilot.llm.transport import Messages, RateLimited, Reply, ServiceDown
+from setuppilot.llm.transport import (
+    JsonSchema,
+    Messages,
+    RateLimited,
+    Reply,
+    ResponseFormat,
+    ServiceDown,
+)
 from setuppilot.llm.usage import UsageStore
 
 _REJECTED_MESSAGES = {
@@ -28,15 +35,24 @@ class GroqTransport:
     def __init__(self, client: openai.OpenAI) -> None:
         self._client = client
 
-    def send(self, model: GroqModel, messages: Messages, max_tokens: int, is_json: bool) -> Reply:
+    def send(
+        self, model: GroqModel, messages: Messages, max_tokens: int, response_format: ResponseFormat
+    ) -> Reply:
         options: dict = {}
         if model.reasoning_effort:
             options |= {
                 "reasoning_effort": model.reasoning_effort,
                 "extra_body": {"include_reasoning": False},
             }
-        if is_json:
+        if response_format == "json":
             options["response_format"] = {"type": "json_object"}
+        elif isinstance(response_format, JsonSchema):
+            schema = {
+                "name": response_format.name,
+                "schema": response_format.schema,
+                "strict": True,
+            }
+            options["response_format"] = {"type": "json_schema", "json_schema": schema}
         try:
             response = self._client.chat.completions.create(
                 model=model.name,
@@ -56,7 +72,7 @@ class GroqTransport:
             raise ServiceDown(str(error)) from error
         except openai.APIStatusError as error:
             details = f"{model.name}: HTTP {error.status_code}: {error.message}"
-            # JSON mode sends this when the model's answer was not valid JSON. LLMUnavailable lets
+            # JSON and schema modes send this when the answer was not valid. LLMUnavailable lets
             # the small model try; the same model at temperature 0 would likely fail again.
             if error.code == "json_validate_failed":
                 raise LLMUnavailable(

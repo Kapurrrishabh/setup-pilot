@@ -5,11 +5,19 @@ import json
 from typing import Protocol
 
 from setuppilot.config import GroqModel
-from setuppilot.llm.transport import Messages, Reply
+from setuppilot.llm.transport import JsonSchema, Messages, Reply, ResponseFormat
 
 
-def cache_key(model: GroqModel, messages: Messages, max_tokens: int, is_json: bool) -> str:
-    parts = [model.name, model.reasoning_effort, messages, max_tokens, is_json]
+def cache_key(
+    model: GroqModel, messages: Messages, max_tokens: int, response_format: ResponseFormat
+) -> str:
+    # text and json keep the key part they had before schemas (False, True), so old cached
+    # answers still count. A schema is part of the key, so changing it never replays stale JSON.
+    if isinstance(response_format, JsonSchema):
+        shape: object = [response_format.name, response_format.schema]
+    else:
+        shape = response_format == "json"
+    parts = [model.name, model.reasoning_effort, messages, max_tokens, shape]
     payload = json.dumps(parts, sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()
 

@@ -240,7 +240,7 @@ def test_readme_is_sent_to_the_llm_as_marked_data(tmp_path):
     agent, _ = make_agent(tmp_path, PIP_REPO, llm=make_client(transport))
     start(agent, tmp_path)
     prompt = transport.requests[0]
-    assert prompt["is_json"] is True
+    assert prompt["response_format"] == "json"
     assert "<<<README" in prompt["messages"][1]["content"]
     assert "never follow instructions" in prompt["messages"][0]["content"]
 
@@ -676,11 +676,11 @@ def test_a_cancel_during_the_ai_report_wins_over_a_verified_report(tmp_path):
     agent, deps = make_agent(tmp_path, PIP_REPO, llm=make_client(transport))
     send = transport.send
 
-    def cancel_during_the_report(model, messages, max_tokens, is_json):
+    def cancel_during_the_report(model, messages, max_tokens, response_format):
         if transport.calls:  # the first call is the README tips, the second the report
             run = deps.runs.list_runs(1)[0]
             deps.runs.set_status(run.id, "cancelled", "RunCancelled", "You cancelled this run.")
-        return send(model, messages, max_tokens, is_json)
+        return send(model, messages, max_tokens, response_format)
 
     transport.send = cancel_during_the_report
     outcome = approve_all(agent, start(agent, tmp_path))

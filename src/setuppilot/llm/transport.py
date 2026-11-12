@@ -1,11 +1,22 @@
 """What the LLM client needs from a chat service. Groq and the test fake both provide it."""
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Literal, Protocol
 
 from setuppilot.config import GroqModel
 
 Messages = list[dict[str, str]]
+
+
+@dataclass(frozen=True)
+class JsonSchema:
+    """The answer must be JSON that follows this schema exactly (Groq strict structured output)."""
+
+    name: str
+    schema: dict[str, Any]
+
+
+ResponseFormat = Literal["text", "json"] | JsonSchema
 
 
 @dataclass(frozen=True)
@@ -29,5 +40,5 @@ class ServiceDown(Exception):
 
 class ChatTransport(Protocol):
     def send(
-        self, model: GroqModel, messages: Messages, max_tokens: int, is_json: bool
+        self, model: GroqModel, messages: Messages, max_tokens: int, response_format: ResponseFormat
     ) -> Reply: ...

@@ -17,7 +17,7 @@ from setuppilot import errors
 from setuppilot.agent.driver import SetupAgent
 from setuppilot.agent.graph import AgentDeps, build_graph
 from setuppilot.chat.bot import RepoChatbot, index_repo
-from setuppilot.chat.index import InMemoryChunkIndex
+from setuppilot.chat.index import ChatRepo, InMemoryChunkIndex
 from setuppilot.config import WebConfig, load_settings
 from setuppilot.db.metrics import InMemoryMetricsStore
 from setuppilot.db.runs import InMemoryRunStore, RunStatus
@@ -30,7 +30,7 @@ from setuppilot.web.app import WebServices, create_app
 from setuppilot.web.labels import ERROR_LABELS, STATUS_LABELS, STEPS, duration_text
 from setuppilot.web.preflight import WindowsFacts, run_preflight
 from setuppilot.web.runs import CommandTracker, RunManager
-from tests.fakes import FakeEmbedder, FakeTransport, make_client, make_repo, reply
+from tests.fakes import FAKE_COMMIT, FakeEmbedder, FakeTransport, make_client, make_repo, reply
 from tests.test_agent import AllInstalled, FakeRunner, NothingInstalled, fake_clone
 from tests.test_config import REAL_CONFIG
 
@@ -51,8 +51,9 @@ def web(tmp_path):
     clone = fake_clone(source)
     deps = AgentDeps(SETTINGS, stores.runs, None, clone, AllInstalled(), runner, "posix")
     manager = RunManager(SetupAgent(deps, stores.checkpointer), stores.runs, CommandTracker())
-    index_repo("someone/demo", URL, source, SETTINGS.chat, 2000, FakeEmbedder(), stores.chat_index)
-    answer = json.dumps({"answer": "MIT.", "found": True, "sources": ["LICENSE"]})
+    repo = ChatRepo("someone/demo", URL, FAKE_COMMIT, owner_github_id=None)
+    index_repo(repo, source, SETTINGS.chat, 2000, FakeEmbedder(), stores.chat_index)
+    answer = json.dumps({"answer": "MIT [1].", "found": True, "sources": [1]})
     llm = make_client(FakeTransport(*[reply(answer)] * 5))
     services = WebServices(
         settings=SETTINGS,
@@ -354,7 +355,7 @@ def test_chat_answers_with_sources(web):
     response = post(
         web, "/api/chat/ask", {"repo": "someone/demo", "question": "Is it MIT License?"}
     )
-    assert response.get_json()["sources"] == ["LICENSE"]
+    assert [c["path"] for c in response.get_json()["citations"]] == ["LICENSE"]
 
 
 def test_preflight_lists_its_checks(web):

@@ -1,129 +1,97 @@
-# Chatbot evaluation: 30 questions over 5 repos. Facts checked against the repos on 2026-11-02.
-# Each answerable question names the one file that holds the fact. The last question for each
-# repo cannot be answered from the repo, so the right reply is to say the files do not tell.
+# Chatbot evaluation: 74 questions over 5 repos. Facts checked against the repos' files on
+# 2026-11-02 (base) and 2026-11-12 (the rest).
+# kind: base (docs and manifests), code (only the source code says it), followup (asked right
+# after `follows` in the same chat), unanswerable (about the repo, but its files do not say) or
+# offtopic. expected_sources: any one of them counts. match: substring for code facts such as
+# hashlib.sha1 or countable.reset, which whole-word matching would miss. A follow-up's facts are
+# not on the repo card, which every question gets, so they measure what search found.
 repos:
   - url: https://github.com/pypa/sampleproject
     questions:
-      - question: "What is this project for?"
-        answerable: true
-        expected_facts: ["packaging"]
-        expected_source: "README.md"
+      - {kind: base, question: "What is this project for?", expected_facts: ["packaging"], expected_sources: ["README.md"]}
       # LICENSE.txt holds the MIT text but never says "MIT"; only the classifier names it.
-      - question: "What license is this project released under?"
-        answerable: true
-        expected_facts: ["mit"]
-        expected_source: "pyproject.toml"
-      - question: "Which Python versions does this project support?"
-        answerable: true
-        expected_facts: ["3.9"]
-        expected_source: "pyproject.toml"
-      - question: "How do I run the tests?"
-        answerable: true
-        expected_facts: ["nox"]
-        expected_source: "noxfile.py"
-      - question: "On which operating systems does CI run the tests?"
-        answerable: true
-        expected_facts: ["macos", "windows"]
-        expected_source: ".github/workflows/test.yml"
-      - question: "How many times has sampleproject been downloaded from PyPI?"
-        answerable: false
+      - {kind: base, question: "What license is this project released under?", expected_facts: ["mit"], expected_sources: ["pyproject.toml"]}
+      - {kind: base, question: "Which Python versions does this project support?", expected_facts: ["3.9"], expected_sources: ["pyproject.toml"]}
+      - {kind: base, question: "How do I run the tests?", expected_facts: ["nox"], expected_sources: ["noxfile.py"]}
+      - {kind: base, question: "On which operating systems does CI run the tests?", expected_facts: ["macos", "windows"], expected_sources: [".github/workflows/test.yml"]}
+      - {kind: unanswerable, question: "How many times has sampleproject been downloaded from PyPI?"}
+      - {kind: code, question: "What does the main function print?", expected_facts: ["main application code"], expected_sources: ["src/sample/__init__.py"]}
+      - {kind: code, question: "What does add_one do?", expected_facts: ["number + 1"], expected_sources: ["src/sample/simple.py"], match: substring}
+      - {kind: code, question: "Which nox session runs when you call nox with no arguments?", expected_facts: ["lint"], expected_sources: ["noxfile.py"]}
+      - {kind: code, question: "Which linter does the lint session run?", expected_facts: ["flake8"], expected_sources: ["noxfile.py"]}
+      - {kind: code, question: "What does the unit test check about add_one?", expected_facts: ["5", "6"], expected_sources: ["tests/test_simple.py"]}
+      - {kind: followup, follows: "How do I run the tests?", question: "Which test framework does that use?", expected_facts: ["pytest"], expected_sources: ["noxfile.py"]}
+      - {kind: followup, follows: "What does add_one do?", question: "Where is it tested?", expected_facts: ["test_simple"], expected_sources: ["tests/test_simple.py"], match: substring}
+      - {kind: offtopic, question: "What is the capital of France?"}
 
   - url: https://github.com/dtolnay/itoa
     questions:
-      - question: "What does this crate do?"
-        answerable: true
-        expected_facts: ["integer", "string"]
-        expected_source: "README.md"
-      - question: "What license is itoa released under?"
-        answerable: true
-        expected_facts: ["mit", "apache"]
-        expected_source: "Cargo.toml"
-      - question: "What is the minimum supported Rust version?"
-        answerable: true
-        expected_facts: ["1.68"]
-        expected_source: "Cargo.toml"
-      - question: "How do I add itoa to my Rust project?"
-        answerable: true
-        expected_facts: ["1.0"]
-        expected_source: "README.md"
-      - question: "Which Rust toolchains does CI test against?"
-        answerable: true
-        expected_facts: ["nightly", "beta", "stable"]
-        expected_source: ".github/workflows/ci.yml"
-      - question: "Which companies use itoa in production?"
-        answerable: false
+      - {kind: base, question: "What does this crate do?", expected_facts: ["integer", "string"], expected_sources: ["README.md"]}
+      - {kind: base, question: "What license is itoa released under?", expected_facts: ["mit", "apache"], expected_sources: ["Cargo.toml"]}
+      - {kind: base, question: "What is the minimum supported Rust version?", expected_facts: ["1.68"], expected_sources: ["Cargo.toml"]}
+      - {kind: base, question: "How do I add itoa to my Rust project?", expected_facts: ["1.0"], expected_sources: ["README.md"]}
+      - {kind: base, question: "Which Rust toolchains does CI test against?", expected_facts: ["nightly", "beta", "stable"], expected_sources: [".github/workflows/ci.yml"]}
+      - {kind: unanswerable, question: "Which companies use itoa in production?"}
+      - {kind: code, question: "What lookup table does itoa use to write two digits at a time?", expected_facts: ["decimal_pairs"], expected_sources: ["src/lib.rs"], match: substring}
+      - {kind: code, question: "Which integer types implement the Integer trait?", expected_facts: ["i128", "u128"], expected_sources: ["src/lib.rs"]}
+      - {kind: code, question: "Why can other crates not implement the Integer trait?", expected_facts: ["sealed"], expected_sources: ["src/lib.rs"]}
+      - {kind: code, question: "Which function turns the written digits into a &str without checking them?", expected_facts: ["slice_buffer_to_str"], expected_sources: ["src/lib.rs"], match: substring}
+      - {kind: code, question: "Which Cargo feature checks at build time that functions cannot panic?", expected_facts: ["no-panic"], expected_sources: ["Cargo.toml", "src/lib.rs"], match: substring}
+      - {kind: followup, follows: "What is the Buffer type?", question: "How many bytes does it hold?", expected_facts: ["max_str_len"], expected_sources: ["src/lib.rs"], match: substring}
+      - {kind: followup, follows: "What is the minimum supported Rust version?", question: "Is that version tested in CI?", expected_facts: ["1.68.0"], expected_sources: [".github/workflows/ci.yml"]}
+      - {kind: offtopic, question: "Who won the 2022 football World Cup?"}
 
   - url: https://github.com/pallets/itsdangerous
     questions:
-      - question: "What does ItsDangerous do?"
-        answerable: true
-        expected_facts: ["sign"]
-        expected_source: "README.md"
-      - question: "What license does this project use?"
-        answerable: true
-        expected_facts: ["bsd"]
-        expected_source: "pyproject.toml"
-      - question: "What is the oldest Python version it supports?"
-        answerable: true
-        expected_facts: ["3.10"]
-        expected_source: "pyproject.toml"
-      - question: "How do I install it?"
-        answerable: true
-        expected_facts: ["pip install"]
-        expected_source: "docs/index.rst"
-      - question: "How can I contribute to this project?"
-        answerable: true
-        expected_facts: ["palletsprojects.com/contributing"]
-        expected_source: "README.md"
-      - question: "How much money did the Pallets organization get from donations last year?"
-        answerable: false
+      - {kind: base, question: "What does ItsDangerous do?", expected_facts: ["sign"], expected_sources: ["README.md"]}
+      - {kind: base, question: "What license does this project use?", expected_facts: ["bsd"], expected_sources: ["pyproject.toml"]}
+      - {kind: base, question: "What is the oldest Python version it supports?", expected_facts: ["3.10"], expected_sources: ["pyproject.toml"]}
+      - {kind: base, question: "How do I install it?", expected_facts: ["pip install"], expected_sources: ["docs/index.rst"]}
+      - {kind: base, question: "How can I contribute to this project?", expected_facts: ["palletsprojects.com/contributing"], expected_sources: ["README.md"]}
+      - {kind: unanswerable, question: "How much money did the Pallets organization get from donations last year?"}
+      - {kind: code, question: "Which hash function does Signer use by default?", expected_facts: ["sha1"], expected_sources: ["src/itsdangerous/signer.py", "docs/concepts.rst"], match: substring}
+      - {kind: code, question: "What is the default key derivation method of Signer?", expected_facts: ["django-concat"], expected_sources: ["src/itsdangerous/signer.py"], match: substring}
+      - {kind: code, question: "Which exception is raised when a timestamped signature is older than max_age?", expected_facts: ["signatureexpired"], expected_sources: ["src/itsdangerous/timed.py", "src/itsdangerous/exc.py", "docs/timed.rst"], match: substring}
+      - {kind: code, question: "What does unsign raise when the signature does not match?", expected_facts: ["badsignature"], expected_sources: ["src/itsdangerous/signer.py"]}
+      - {kind: code, question: "Which function compares two signatures in constant time?", expected_facts: ["compare_digest"], expected_sources: ["src/itsdangerous/signer.py"], match: substring}
+      - {kind: code, question: "How does URLSafeSerializer make the payload shorter?", expected_facts: ["zlib"], expected_sources: ["src/itsdangerous/url_safe.py"], match: substring}
+      - {kind: code, question: "What is the default salt of Signer?", expected_facts: ["itsdangerous.signer"], expected_sources: ["src/itsdangerous/signer.py"], match: substring}
+      - {kind: followup, follows: "What is TimestampSigner?", question: "What does it raise when the signature is too old?", expected_facts: ["signatureexpired"], expected_sources: ["src/itsdangerous/timed.py", "src/itsdangerous/exc.py", "docs/timed.rst"], match: substring}
+      - {kind: followup, follows: "What does the Signer class do?", question: "And which hash does it use by default?", expected_facts: ["sha1"], expected_sources: ["src/itsdangerous/signer.py", "docs/concepts.rst"], match: substring}
+      - {kind: followup, follows: "What does URLSafeSerializer do?", question: "Which compression does it use for that?", expected_facts: ["zlib"], expected_sources: ["src/itsdangerous/url_safe.py"], match: substring}
+      - {kind: offtopic, question: "Write me a poem about cats."}
 
   - url: https://github.com/expressjs/cors
     questions:
-      - question: "What does this package do?"
-        answerable: true
-        expected_facts: ["middleware"]
-        expected_source: "README.md"
-      - question: "What license is cors released under?"
-        answerable: true
-        expected_facts: ["mit"]
-        expected_source: "LICENSE"
-      - question: "Which Node.js version does it need?"
-        answerable: true
-        expected_facts: ["0.10"]
-        expected_source: "package.json"
-      - question: "How do I install it?"
-        answerable: true
-        expected_facts: ["npm install cors"]
-        expected_source: "README.md"
-      - question: "Which test framework do the tests use?"
-        answerable: true
-        expected_facts: ["mocha"]
-        expected_source: "package.json"
-      - question: "What is the default request limit of the built-in rate limiter?"
-        answerable: false
+      - {kind: base, question: "What does this package do?", expected_facts: ["middleware"], expected_sources: ["README.md"]}
+      - {kind: base, question: "What license is cors released under?", expected_facts: ["mit"], expected_sources: ["LICENSE"]}
+      - {kind: base, question: "Which Node.js version does it need?", expected_facts: ["0.10"], expected_sources: ["package.json"]}
+      - {kind: base, question: "How do I install it?", expected_facts: ["npm install cors"], expected_sources: ["README.md"]}
+      - {kind: base, question: "Which test framework do the tests use?", expected_facts: ["mocha"], expected_sources: ["package.json"]}
+      - {kind: unanswerable, question: "What is the default request limit of the built-in rate limiter?"}
+      - {kind: code, question: "Which function checks whether a request origin is allowed?", expected_facts: ["isoriginallowed"], expected_sources: ["lib/index.js"]}
+      - {kind: code, question: "Which npm package does cors use to set the Vary header?", expected_facts: ["vary"], expected_sources: ["lib/index.js", "package.json"]}
+      - {kind: code, question: "Which function sets the Access-Control-Max-Age header?", expected_facts: ["configuremaxage"], expected_sources: ["lib/index.js"]}
+      - {kind: code, question: "Which HTTP methods does cors allow by default?", expected_facts: ["patch", "delete"], expected_sources: ["lib/index.js", "README.md"]}
+      - {kind: code, question: "Which status code does cors send for a successful preflight request by default?", expected_facts: ["204"], expected_sources: ["lib/index.js", "README.md"]}
+      - {kind: code, question: "Why does cors set Content-Length to 0 on a preflight response?", expected_facts: ["safari"], expected_sources: ["lib/index.js"]}
+      - {kind: followup, follows: "What does the methods option do?", question: "What is its default value?", expected_facts: ["patch", "delete"], expected_sources: ["README.md", "lib/index.js"]}
+      - {kind: followup, follows: "What does the preflightContinue option do?", question: "What is its default?", expected_facts: ["false"], expected_sources: ["README.md", "lib/index.js"]}
+      - {kind: offtopic, question: "What will the weather be like tomorrow?"}
 
   - url: https://github.com/sindresorhus/slugify
     questions:
-      - question: "What is this library useful for?"
-        answerable: true
-        expected_facts: ["url"]
-        expected_source: "readme.md"
-      - question: "What license is it released under?"
-        answerable: true
-        expected_facts: ["mit"]
-        expected_source: "license"
-      - question: "Which Node.js version does it need?"
-        answerable: true
-        expected_facts: ["20"]
-        expected_source: "package.json"
-      - question: "How do I install it?"
-        answerable: true
-        expected_facts: ["@sindresorhus/slugify"]
-        expected_source: "readme.md"
-      - question: "How do I report a security vulnerability?"
-        answerable: true
-        expected_facts: ["advisories"]
-        expected_source: ".github/security.md"
-      - question: "How much money has this project earned from GitHub Sponsors?"
-        answerable: false
+      - {kind: base, question: "What is this library useful for?", expected_facts: ["url"], expected_sources: ["readme.md"]}
+      - {kind: base, question: "What license is it released under?", expected_facts: ["mit"], expected_sources: ["license"]}
+      - {kind: base, question: "Which Node.js version does it need?", expected_facts: ["20"], expected_sources: ["package.json"]}
+      - {kind: base, question: "How do I install it?", expected_facts: ["@sindresorhus/slugify"], expected_sources: ["readme.md"]}
+      - {kind: base, question: "How do I report a security vulnerability?", expected_facts: ["advisories"], expected_sources: [".github/security.md"]}
+      - {kind: unanswerable, question: "How much money has this project earned from GitHub Sponsors?"}
+      - {kind: code, question: "Why does removeCounterSuffix use split instead of a regex?", expected_facts: ["quadratic"], expected_sources: ["index.js"]}
+      - {kind: code, question: "Which package does slugify use for transliteration?", expected_facts: ["@sindresorhus/transliterate"], expected_sources: ["index.js", "package.json", "readme.md"], match: substring}
+      - {kind: code, question: "Which error does slugify throw when the input is not a string?", expected_facts: ["typeerror"], expected_sources: ["index.js"]}
+      - {kind: code, question: "Which function splits camelCase words before slugifying?", expected_facts: ["decamelize"], expected_sources: ["index.js"]}
+      - {kind: code, question: "What does slugify replace the ♥ character with by default?", expected_facts: ["love"], expected_sources: ["overridable-replacements.js", "readme.md"]}
+      - {kind: followup, follows: "Does slugify lowercase the output?", question: "How do I turn that off?", expected_facts: ["lowercase"], expected_sources: ["readme.md", "index.js"]}
+      - {kind: followup, follows: "What does slugifyWithCounter do?", question: "How do I start the count again?", expected_facts: ["reset"], expected_sources: ["readme.md", "index.js"], match: substring}
+      - {kind: offtopic, question: "How do I cook pasta?"}

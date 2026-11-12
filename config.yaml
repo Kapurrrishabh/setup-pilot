@@ -70,26 +70,24 @@ agent:
 
 chat:
   # Runs on your machine; no paid embedding API. Its size (384) is fixed in 002_chat.sql.
+  # Chunks are cut to fit the window this model reports (256 tokens for this one).
   embedding_model: sentence-transformers/all-MiniLM-L6-v2
   embedding_dimensions: 384
   # Repos cloned just for the chatbot go here.
   repos_dir: workspace/chat-repos
-  # The model reads only the first 256 tokens. Measured on the eval repos (2026-11-03): 37 of 233
-  # chunks go past that at 800 (code-like files such as package.json), 2 of 313 at 550. Re-run
-  # eval-chat --mode retrieval before lowering it: the figures below were measured at 800.
-  chunk_chars: 800
-  chunk_overlap_chars: 100
   max_file_bytes: 200000
-  # Keeps the free database small: about 4 MB per repo at this size.
+  # Keeps the free database small: about 6 MB per repo at this size, with the vectors and the
+  # word index (measured on local Postgres, 2026-11-12, 1,500 chunks of Python code).
   max_chunks_per_repo: 1500
   top_k: 5
-  # Measured on eval/chat_questions.yaml (2026-11-02): with at most 2 chunks per file, the right
-  # file is found for 21/25 questions at 0.2 (20/25 after the file-selection fix in eval/REPORT.md),
-  # but only 14/25 at 0.3. Off-topic questions score
-  # about 0.16, so 0.2 still skips the LLM for them.
   max_chunks_per_file: 2
+  # The LLM is skipped ("not found", no tokens) only when no chunk is this close AND no word of
+  # the question is in the repo. Measured on eval/chat_questions.yaml (2026-11-12): that skips 3
+  # of 5 off-topic questions and none of the 64 answerable ones.
   min_similarity: 0.2
-  answer_max_tokens: 700
+  # PROVISIONAL (research-chat.md): gpt-oss counts its hidden reasoning in this too. Not
+  # measured yet: that needs a Groq key.
+  answer_max_tokens: 1200
   # Every turn not yet summarised goes into each prompt (up to twice this many; more while the
   # summary fails, as it is retried each question). Older ones are folded into a short summary
   # (one small-model call every history_turns questions).

@@ -6,7 +6,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from setuppilot.chat.bot import AnswerCutOff, ChatAnswer, ChatSession, RepoChatbot, search_chunks
+from setuppilot.chat.bot import (
+    AnswerCutOff,
+    AnswerUnreadable,
+    ChatSession,
+    RepoChatbot,
+    retrieve,
+)
 from setuppilot.chat.embed import Embedder
 from setuppilot.chat.repos import index_github_repo, repo_key
 from setuppilot.config import GroqModel, Settings
@@ -16,15 +22,20 @@ from setuppilot.evaluation.chat_eval import (
     ChatCase,
     ChatScore,
     load_done,
+    missed,
     results_table,
     save_score,
     score_answer,
     score_retrieval,
 )
 from setuppilot.llm.client import LLMClient
-from setuppilot.llm.transport import Messages, Reply
+from setuppilot.llm.transport import Messages, Reply, ResponseFormat
 
 Mode = Literal["full", "retrieval", "replay"]
+_RETRIEVAL_NOTE = (
+    "Search only, no LLM: Correct means every expected fact is in the text the LLM would get "
+    "(the repo card and the chunks found); Grounded means search found an expected file."
+)
 
 
 class CacheMiss(SetupPilotError):
@@ -34,7 +45,9 @@ class CacheMiss(SetupPilotError):
 class CacheOnlyTransport:
     """Replay mode: every answer must already be in the cache, so a rerun costs nothing."""
 
-    def send(self, model: GroqModel, messages: Messages, max_tokens: int, is_json: bool) -> Reply:
+    def send(
+        self, model: GroqModel, messages: Messages, max_tokens: int, response_format: ResponseFormat
+    ) -> Reply:
         raise CacheMiss(
             "Replay mode: this answer is not in the cache.",
             details=f"{model.name} was not called. Run the evaluation in full mode first.",
@@ -65,17 +78,24 @@ def run_chat_eval(
     for case in cases:
         if (case.repo_url, case.question) in done:
             continue
-        key = repo_key(case.repo_url)
+        # The eval has no GitHub sign-in, so it reads public repos only.
+        session = ChatSession(repo_key(case.repo_url), viewer_github_id=None)
         if bot is None:
-            (vector,) = embedder.embed([case.question])
-            hits = search_chunks(stores.chat_index, settings.chat, key, vector)
-            score = score_retrieval(case, hits, settings.chat.min_similarity)
+            if case.follows:
+                # As if the earlier question was just asked: search reads only that question.
+                session.turns.append((case.follows, ""))
+            found = retrieve(stores.chat_index, embedder, settings.chat, session, case.question)
+            score = score_retrieval(case, found)
         else:
             try:
-                score = score_answer(case, bot.ask(ChatSession(key), case.question))
+                if case.follows:
+                    bot.ask(session, case.follows)
+                score = score_answer(case, bot.ask(session, case.question))
             except AnswerCutOff:
                 # Counted as a miss, not a stop: a rerun would ask the same question and cut again.
-                score = score_answer(case, ChatAnswer("(answer cut off)", [], True, False, 0))
+                score = missed(case, "(answer cut off)")
+            except AnswerUnreadable:
+                score = missed(case, "(answer not readable)")
             except (LLMUnavailable, BudgetExceeded, CacheMiss) as error:
                 print(f"Stopped: {error.message} Run the same command later to carry on.")
                 break
@@ -85,12 +105,18 @@ def run_chat_eval(
     stamp = datetime.now(UTC).strftime("%Y-%m-%d-%H%M")
     heading = f"# Chatbot evaluation ({mode}), {stamp} UTC"
     done_line = f"{len(scores)} of {len(cases)} questions done."
+    note = f"{_RETRIEVAL_NOTE}\n\n" if mode == "retrieval" else ""
     results_dir.mkdir(parents=True, exist_ok=True)
-    (results_dir / f"chat-{mode}-{stamp}.md").write_text(f"{heading}\n\n{done_line}\n\n{table}\n")
+    report = f"{heading}\n\n{done_line}\n\n{note}{table}\n"
+    (results_dir / f"chat-{mode}-{stamp}.md").write_text(report)
     print(table)
     return scores
 
 
 def _make_sure_indexed(settings: Settings, stores: Stores, url: str, embedder: Embedder) -> None:
-    if repo_key(url) not in stores.chat_index.repos():
-        index_github_repo(settings, url, embedder, stores.chat_index)
+    key, index = repo_key(url), stores.chat_index
+    is_current = key in index.repos(viewer_github_id=None) and (
+        index.repo(key, viewer_github_id=None).embedding_model == embedder.model_name
+    )
+    if not is_current:
+        index_github_repo(settings, url, embedder, index)

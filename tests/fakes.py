@@ -1,12 +1,13 @@
 """Fakes shared by tests: a clock that moves only when slept, and a scripted LLM."""
 
 import sys
+from collections.abc import Callable
 
 from setuppilot.config import BudgetConfig, GroqConfig, GroqModel, ModelLimits
 from setuppilot.db.metrics import InMemoryMetricsStore
 from setuppilot.llm.cache import InMemoryCache
 from setuppilot.llm.client import LLMClient
-from setuppilot.llm.transport import Messages, Reply
+from setuppilot.llm.transport import Messages, Reply, ResponseFormat
 from setuppilot.llm.usage import InMemoryUsageStore
 
 LIMITS = ModelLimits(
@@ -46,20 +47,41 @@ class FakeClock:
 
 
 class FakeTransport:
-    """Plays back scripted replies or errors, one per call, and records which model was called."""
+    """Plays back scripted replies or errors, one per call, and records which model was called.
+    A step can also be a function of the messages, for a reply that depends on the prompt."""
 
-    def __init__(self, *steps: Reply | Exception) -> None:
+    def __init__(self, *steps: Reply | Exception | Callable[[Messages], Reply]) -> None:
         self._steps = list(steps)
         self.calls: list[str] = []
         self.requests: list[dict] = []
 
-    def send(self, model: GroqModel, messages: Messages, max_tokens: int, is_json: bool) -> Reply:
+    def send(
+        self, model: GroqModel, messages: Messages, max_tokens: int, response_format: ResponseFormat
+    ) -> Reply:
         self.calls.append(model.name)
-        self.requests.append({"messages": messages, "max_tokens": max_tokens, "is_json": is_json})
+        self.requests.append(
+            {"messages": messages, "max_tokens": max_tokens, "response_format": response_format}
+        )
         step = self._steps.pop(0)
         if isinstance(step, Exception):
             raise step
-        return step
+        return step(messages) if callable(step) else step
+
+
+def reply_citing(path: str, text: str = "An answer [1].", found: bool = True):
+    """A fake LLM step: the chatbot's JSON answer, citing the source the prompt labels `path`.
+    Its number depends on search order, so it is read from the prompt."""
+    import json
+    import re
+
+    def reply_for(messages: Messages) -> Reply:
+        prompt = messages[1]["content"]
+        number = re.search(rf"^\[(\d+)\] {re.escape(path)}[:\s]", prompt, re.MULTILINE)
+        if number is None:
+            raise AssertionError(f"{path} is not among the sources:\n{prompt}")
+        return reply(json.dumps({"answer": text, "found": found, "sources": [int(number[1])]}))
+
+    return reply_for
 
 
 def make_client(
@@ -107,7 +129,16 @@ def fake_executable(folder, name: str, code: str):
 class FakeEmbedder:
     """Bag-of-words vectors: texts that share words come out close. Fast, no model download."""
 
+    model_name = "fake-bag-of-words"
     dimensions = 384
+    # The same window as all-MiniLM-L6-v2 (256 tokens, less its 2 special ones).
+    max_tokens = 254
+
+    def count_tokens(self, text):
+        """Words and punctuation marks, close to how a real tokenizer counts."""
+        import re
+
+        return len(re.findall(r"\w+|[^\w\s]", text))
 
     def embed(self, texts):
         import math
@@ -122,3 +153,21 @@ class FakeEmbedder:
             norm = math.sqrt(sum(x * x for x in vector)) or 1.0
             vectors.append([x / norm for x in vector])
         return vectors
+
+
+# A made-up commit id for repos indexed in tests.
+FAKE_COMMIT = "0123456789abcdef0123456789abcdef01234567"
+
+
+def make_chat_clone(repos_dir, key: str, files: dict[str, str]):
+    """A finished chatbot clone of owner/name under repos_dir: a real git repo with one commit,
+    so its commit id can be read."""
+    import subprocess
+
+    folder = make_repo(repos_dir / key, files)
+    git = ["git", "-C", str(folder), "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run(["git", "init", "-q", str(folder)], check=True)
+    subprocess.run([*git, "add", "."], check=True)
+    subprocess.run([*git, "commit", "-qm", "files"], check=True)
+    (folder / ".git/setuppilot-clone-done").touch()
+    return folder

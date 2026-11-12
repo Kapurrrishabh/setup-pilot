@@ -108,8 +108,9 @@ def ask_one_question(settings: Settings, question: str) -> None:
         [{"role": "user", "content": question}],
         choice="big_then_small",
         max_tokens=ASK_MAX_TOKENS,
-        is_json=False,
+        response_format="text",
         run_id=None,
+        is_cacheable=True,
     )
     print(result.text)
     print(

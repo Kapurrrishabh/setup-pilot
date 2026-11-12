@@ -12,7 +12,15 @@ from setuppilot.db.metrics import MetricName, MetricsStore
 from setuppilot.errors import DatabaseUnavailable, LLMUnavailable
 from setuppilot.llm.cache import LLMCache, cache_key
 from setuppilot.llm.limiter import MINUTE, DailyLimitReached, RateLimiter
-from setuppilot.llm.transport import ChatTransport, Messages, RateLimited, Reply, ServiceDown
+from setuppilot.llm.transport import (
+    ChatTransport,
+    JsonSchema,
+    Messages,
+    RateLimited,
+    Reply,
+    ResponseFormat,
+    ServiceDown,
+)
 from setuppilot.llm.usage import Usage, UsageStore, check_budget
 
 log = logging.getLogger(__name__)
@@ -38,9 +46,13 @@ class LLMResult:
     is_truncated: bool
 
 
-def estimate_tokens(messages: Messages, max_tokens: int) -> int:
+def estimate_tokens(messages: Messages, max_tokens: int, response_format: ResponseFormat) -> int:
     # PROVISIONAL: about 3 characters per token for English plus code. Groq reports real counts.
-    return len(json.dumps(messages, ensure_ascii=False)) // 3 + max_tokens
+    sent = json.dumps(messages, ensure_ascii=False)
+    if isinstance(response_format, JsonSchema):
+        # The schema goes to Groq with the prompt, so count it too.
+        sent += json.dumps(response_format.schema)
+    return len(sent) // 3 + max_tokens
 
 
 def backoff_delay(attempt: int, base: float, cap: float, random: Callable[[], float]) -> float:
@@ -82,30 +94,42 @@ class LLMClient:
         *,
         choice: ModelChoice,
         max_tokens: int,
-        is_json: bool,
+        response_format: ResponseFormat,
         run_id: str | None,
+        # False for prompts that hold a private repo's text: the cache is shared and kept.
+        is_cacheable: bool,
     ) -> LLMResult:
         roles = _ROLES[choice]
         # Check every allowed model's cache first, so a replay never pays for a new answer.
-        for role in roles:
+        for role in roles if is_cacheable else ():
             model = self._models[role]
-            key = cache_key(model, messages, max_tokens, is_json)
+            key = cache_key(model, messages, max_tokens, response_format)
             if (cached := self._cache.get(key)) is not None:
                 return self._finish(model.name, cached, run_id, is_cached=True, attempt=0)
         *first_roles, last_role = roles
         for role in first_roles:
             try:
-                return self._complete_with(role, messages, max_tokens, is_json, run_id)
+                return self._complete_with(
+                    role, messages, max_tokens, response_format, run_id, is_cacheable
+                )
             except LLMUnavailable as error:
                 log.warning("switching to the small model", extra={"reason": error.details})
                 self._count("small_model_fallback", run_id)
-        return self._complete_with(last_role, messages, max_tokens, is_json, run_id)
+        return self._complete_with(
+            last_role, messages, max_tokens, response_format, run_id, is_cacheable
+        )
 
     def _complete_with(
-        self, role: str, messages: Messages, max_tokens: int, is_json: bool, run_id: str | None
+        self,
+        role: str,
+        messages: Messages,
+        max_tokens: int,
+        response_format: ResponseFormat,
+        run_id: str | None,
+        is_cacheable: bool,
     ) -> LLMResult:
         model = self._models[role]
-        estimate = estimate_tokens(messages, max_tokens)
+        estimate = estimate_tokens(messages, max_tokens, response_format)
         now = datetime.fromtimestamp(self._clock(), UTC)
         run_tokens = self._usage.tokens_for_run(run_id) if run_id else 0
         check_budget(self._budget, run_tokens, self._usage.tokens_on_day(now.date()), estimate)
@@ -118,7 +142,7 @@ class LLMClient:
             except DailyLimitReached as error:
                 raise LLMUnavailable(DAILY_LIMIT_MESSAGE, details=str(error)) from error
             try:
-                reply = self._transport.send(model, messages, max_tokens, is_json)
+                reply = self._transport.send(model, messages, max_tokens, response_format)
             except RateLimited as error:
                 log.warning(
                     "rate limit hit", extra={"model": model.name, "is_daily": error.is_daily}
@@ -138,9 +162,10 @@ class LLMClient:
             else:
                 limiter.settle(use, reply.input_tokens + reply.output_tokens)
                 result = self._finish(model.name, reply, run_id, is_cached=False, attempt=attempt)
-                if reply.text and not reply.is_truncated:
+                if is_cacheable and reply.text and not reply.is_truncated:
                     try:
-                        self._cache.put(cache_key(model, messages, max_tokens, is_json), reply)
+                        key = cache_key(model, messages, max_tokens, response_format)
+                        self._cache.put(key, reply)
                     except DatabaseUnavailable as error:
                         log.warning(
                             "could not save llm answer to cache", extra={"reason": error.details}

@@ -4,7 +4,14 @@ import pytest
 
 from setuppilot import __main__ as cli
 from setuppilot.__main__ import main
-from tests.fakes import FakeTransport, make_client, make_repo, reply
+from tests.fakes import (
+    FakeTransport,
+    make_chat_clone,
+    make_client,
+    make_repo,
+    reply,
+    reply_citing,
+)
 from tests.test_config import REAL_CONFIG
 
 
@@ -169,14 +176,11 @@ def test_show_prints_a_runs_timeline_tokens_and_error(
 
 
 def test_index_then_chat_answers_with_sources(in_empty_project, monkeypatch, capsys):
-    import json
-
     from setuppilot.chat import cli as chat_cli
     from tests.fakes import FakeEmbedder
 
-    folder = make_repo(
-        in_empty_project / "workspace/chat-repos/someone/demo",
-        {"LICENSE": "MIT License", ".git/setuppilot-clone-done": ""},
+    folder = make_chat_clone(
+        in_empty_project / "workspace/chat-repos", "someone/demo", {"LICENSE": "MIT License"}
     )
     assert folder.is_dir()
     monkeypatch.setattr(chat_cli, "LocalEmbedder", lambda name, size: FakeEmbedder())
@@ -192,14 +196,13 @@ def test_index_then_chat_answers_with_sources(in_empty_project, monkeypatch, cap
     main(["index", "https://github.com/someone/demo"])
     assert "Indexed someone/demo" in capsys.readouterr().out
 
-    answer = json.dumps({"answer": "MIT.", "found": True, "sources": ["LICENSE"]})
-    fake = make_client(FakeTransport(reply(answer)))
+    fake = make_client(FakeTransport(reply_citing("LICENSE", "MIT.")))
     monkeypatch.setattr(chat_cli, "build_llm_client", lambda settings, usage, cache, metrics: fake)
     questions = iter(["What license is it under? MIT License?", "q"])
     monkeypatch.setattr("builtins.input", lambda prompt: next(questions))
     main(["chat", "someone/demo"])
     out = capsys.readouterr().out
-    assert "MIT." in out and "Sources: LICENSE" in out
+    assert "MIT." in out and "Sources: [1] LICENSE:1-1" in out
 
 
 def test_chat_about_an_unindexed_repo_says_how_to_index_it(in_empty_project, capsys):

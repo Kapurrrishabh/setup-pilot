@@ -103,8 +103,6 @@ class ChatConfig(_Strict):
     embedding_model: str
     embedding_dimensions: PositiveInt
     repos_dir: Path
-    chunk_chars: PositiveInt
-    chunk_overlap_chars: int = Field(ge=0)
     max_file_bytes: PositiveInt
     max_chunks_per_repo: PositiveInt
     top_k: PositiveInt
@@ -112,15 +110,6 @@ class ChatConfig(_Strict):
     min_similarity: float = Field(ge=-1, le=1)
     answer_max_tokens: PositiveInt
     history_turns: int = Field(ge=0)
-
-    @model_validator(mode="after")
-    def _overlap_fits(self) -> "ChatConfig":
-        if self.chunk_overlap_chars * 2 >= self.chunk_chars:
-            raise ValueError(
-                f"chat.chunk_overlap_chars ({self.chunk_overlap_chars}) must be less than half "
-                f"of chat.chunk_chars ({self.chunk_chars}). Lower it in config.yaml."
-            )
-        return self
 
 
 # This app runs commands on your machine, so the web server never listens beyond it.
