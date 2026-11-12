@@ -14,6 +14,7 @@ from setuppilot.db.runs import RunStore
 from setuppilot.guardrails.commands import ExecTarget
 from setuppilot.guardrails.docker_mode import exec_target
 from setuppilot.llm.usage import UsageStore
+from setuppilot.tools.clone import CloneRequest
 
 _COLUMNS = ("Repo", "Detected", "Stack right", "Install right", "Verified", "Error",
             "Time (s)", "Tokens", "Approvals")  # fmt: skip
@@ -90,7 +91,9 @@ def run_setup_case(
     """host: the system the agent runs on, which picks the expected install commands."""
     target = exec_target(host, use_docker, case.expected_manager)
     started = clock()
-    outcome: Waiting | Finished = agent.start(case.url, str(dest), use_docker=use_docker)
+    outcome: Waiting | Finished = agent.start(
+        case.url, str(dest), use_docker=use_docker, request=CloneRequest("public", None)
+    )
     approvals, installs = 0, []
     while isinstance(outcome, Waiting):
         reply = auto_answer(case, outcome.question)

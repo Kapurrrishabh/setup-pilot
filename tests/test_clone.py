@@ -7,10 +7,17 @@ import pytest
 from setuppilot.config import RepoConfig
 from setuppilot.errors import CloneFailed, PrereqMissing
 from setuppilot.tools import clone
-from setuppilot.tools.clone import check_github_repo, clone_repo, git_clone, git_options
+from setuppilot.tools.clone import (
+    CloneRequest,
+    check_github_repo,
+    clone_repo,
+    git_clone,
+    git_options,
+)
 from setuppilot.tools.github_url import RepoRef
 from tests.fakes import fake_executable, make_repo
 
+PUBLIC = CloneRequest("public", None)
 REF = RepoRef("someone", "demo")
 CONFIG = RepoConfig(max_size_mb=1, clone_timeout_seconds=60, max_tree_chars=2000)
 # A fake git that prints the arguments it was given and fails.
@@ -43,7 +50,7 @@ def remote(tmp_path, monkeypatch):
 
 
 def test_clone_makes_a_folder_named_after_the_repo(tmp_path, remote):
-    target = clone_repo(REF, tmp_path, CONFIG, repo_check=no_check)
+    target = clone_repo(REF, tmp_path, CONFIG, repo_check=no_check, request=PUBLIC)
     assert target == tmp_path / "demo"
     assert (target / "README.md").read_text() == "# demo\n"
 
@@ -52,7 +59,7 @@ def test_repo_bigger_than_the_limit_is_refused_before_its_files_are_checked_out(
     (remote / "big.bin").write_bytes(b"0" * 2_000_000)
     commit_all(remote)
     with pytest.raises(CloneFailed, match="files were not checked out") as error:
-        clone_repo(REF, tmp_path, CONFIG, repo_check=no_check)
+        clone_repo(REF, tmp_path, CONFIG, repo_check=no_check, request=PUBLIC)
     assert "1.9 MB" in error.value.details
     assert not (tmp_path / "demo" / "big.bin").exists()
 
@@ -60,12 +67,12 @@ def test_repo_bigger_than_the_limit_is_refused_before_its_files_are_checked_out(
 def test_existing_folder_is_not_overwritten(tmp_path):
     (tmp_path / "demo").mkdir()
     with pytest.raises(CloneFailed, match="already there"):
-        clone_repo(REF, tmp_path, CONFIG, repo_check=no_check)
+        clone_repo(REF, tmp_path, CONFIG, repo_check=no_check, request=PUBLIC)
 
 
 def test_missing_destination_folder_is_refused(tmp_path):
     with pytest.raises(CloneFailed, match="does not exist"):
-        clone_repo(REF, tmp_path / "nope", CONFIG, repo_check=no_check)
+        clone_repo(REF, tmp_path / "nope", CONFIG, repo_check=no_check, request=PUBLIC)
 
 
 def test_repo_github_does_not_know_is_refused_before_cloning(tmp_path):
@@ -73,7 +80,7 @@ def test_repo_github_does_not_know_is_refused_before_cloning(tmp_path):
         raise CloneFailed("This repo was not found.", details="404")
 
     with pytest.raises(CloneFailed, match="not found"):
-        clone_repo(REF, tmp_path, CONFIG, repo_check=missing)
+        clone_repo(REF, tmp_path, CONFIG, repo_check=missing, request=PUBLIC)
     assert not (tmp_path / "demo").exists()
 
 

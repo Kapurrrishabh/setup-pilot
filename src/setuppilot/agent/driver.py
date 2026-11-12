@@ -10,6 +10,7 @@ from langgraph.types import Command
 from setuppilot.agent.graph import AgentDeps, build_graph
 from setuppilot.errors import NotFound, SetupPilotError
 from setuppilot.logging_setup import run_id_var
+from setuppilot.tools.clone import CloneRequest
 
 
 @dataclass(frozen=True)
@@ -48,12 +49,14 @@ class SetupAgent:
         # Each node is one graph step; this backs up agent.max_steps with LangGraph's own stop.
         self._recursion_limit = deps.settings.agent.max_steps + 10
 
-    def start(self, repo_url: str, dest_dir: str, use_docker: bool) -> Waiting | Finished:
+    def start(
+        self, repo_url: str, dest_dir: str, use_docker: bool, request: CloneRequest
+    ) -> Waiting | Finished:
         run = self._deps.runs.create_run(repo_url, dest_dir)
-        return self.begin(run.id, repo_url, dest_dir, use_docker)
+        return self.begin(run.id, repo_url, dest_dir, use_docker, request)
 
     def begin(
-        self, run_id: str, repo_url: str, dest_dir: str, use_docker: bool
+        self, run_id: str, repo_url: str, dest_dir: str, use_docker: bool, request: CloneRequest
     ) -> Waiting | Finished:
         """Run the first steps of a run that is already saved (the web app makes it first)."""
         first_state = {
@@ -61,6 +64,8 @@ class SetupAgent:
             "repo_url": repo_url,
             "dest_dir": dest_dir,
             "use_docker": use_docker,
+            "access": request.access,
+            "subdir": request.subdir,
             "steps": 0,
             "next_index": 0,
         }

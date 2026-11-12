@@ -7,7 +7,7 @@ from setuppilot.chat.embed import Embedder
 from setuppilot.chat.index import ChatRepo, ChunkIndex
 from setuppilot.config import Settings
 from setuppilot.errors import CloneFailed
-from setuppilot.tools.clone import _git, check_github_repo, clone_repo
+from setuppilot.tools.clone import CloneRequest, _git, check_github_repo, clone_repo
 from setuppilot.tools.github_url import parse_github_url
 
 # Written only after a clone fully works, so a refused or cut-off clone is never indexed.
@@ -26,7 +26,7 @@ def chat_repo_folder(settings: Settings, url: str) -> tuple[str, str, Path]:
         )
     if not folder.exists():
         owner_dir.mkdir(parents=True, exist_ok=True)
-        clone_repo(ref, owner_dir, settings.repo, check_github_repo)
+        clone_repo(ref, owner_dir, settings.repo, check_github_repo, CloneRequest("public", None))
         (folder / _DONE_MARKER).touch()
     return repo_key(url), ref.url, folder
 

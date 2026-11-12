@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
@@ -39,6 +39,7 @@ from setuppilot.setup.plans import (
     is_installable_project,
     quiet_checks,
 )
+from setuppilot.tools.clone import CloneRequest
 from setuppilot.tools.compose import find_compose_files
 from setuppilot.tools.detect import StackCandidate, detect_stacks
 from setuppilot.tools.github_url import RepoRef, parse_github_url
@@ -59,6 +60,8 @@ class RunState(TypedDict, total=False):
     repo_url: str
     dest_dir: str
     use_docker: bool
+    access: Literal["public", "github"]
+    subdir: str | None
     repo_dir: str
     candidates: list[dict]
     conflicts: list[str]
@@ -82,7 +85,7 @@ class AgentDeps:
     settings: Settings
     runs: RunStore
     llm: LLMClient | None
-    clone: Callable[[RepoRef, Path], Path]
+    clone: Callable[[RepoRef, Path, CloneRequest], Path]
     probe: ToolProbe
     run: Callable[[Any], CommandOutput]
     # The system SetupPilot runs on. Docker mode may still run commands for "posix".
@@ -191,7 +194,9 @@ def _save_step(
 
 def _clone(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
     ref = parse_github_url(state["repo_url"])
-    target = deps.clone(ref, Path(state["dest_dir"]))
+    # Runs saved before v2 have no access field, and were all public.
+    request = CloneRequest(state.get("access", "public"), state.get("subdir"))
+    target = deps.clone(ref, Path(state["dest_dir"]), request)
     return {"repo_dir": str(target)}, StepNote(
         f"Cloned {ref.url} to {target}.", "git", {"url": ref.url}
     )

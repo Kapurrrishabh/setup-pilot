@@ -12,6 +12,7 @@ from setuppilot.config import load_settings
 from setuppilot.db.runs import InMemoryRunStore
 from setuppilot.guardrails.commands import VENV_PYTHON
 from setuppilot.guardrails.runner import CommandOutput
+from setuppilot.tools.clone import CloneRequest
 from setuppilot.tools.prereqs import TOOLS, Probe
 from tests.fakes import FakeTransport, make_client, make_repo, reply
 from tests.test_config import REAL_CONFIG
@@ -53,7 +54,7 @@ class NothingInstalled:
 
 
 def fake_clone(source):
-    def clone(ref, dest):
+    def clone(ref, dest, request):
         target = dest / ref.name
         shutil.copytree(source, target, symlinks=True)
         return target
@@ -82,7 +83,10 @@ def make_agent(
 
 
 def start(agent, tmp_path, use_docker=False):
-    return agent.start("https://github.com/someone/demo", str(tmp_path / "dest"), use_docker)
+    request = CloneRequest("public", None)
+    return agent.start(
+        "https://github.com/someone/demo", str(tmp_path / "dest"), use_docker, request
+    )
 
 
 def approve_all(agent, outcome):

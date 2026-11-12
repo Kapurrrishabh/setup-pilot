@@ -206,6 +206,6 @@ class _DockerSpy:
         self._runs = runs
         self.use_docker = []
 
-    def start(self, repo_url, dest_dir, use_docker):
+    def start(self, repo_url, dest_dir, use_docker, request):
         self.use_docker.append(use_docker)
         return Finished(self._runs.create_run(repo_url, dest_dir).id, "", False, None, None)

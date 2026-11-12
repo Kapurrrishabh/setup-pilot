@@ -20,6 +20,7 @@ from setuppilot.evaluation.chat_eval import load_chat_cases
 from setuppilot.evaluation.setup_eval import load_setup_cases
 from setuppilot.llm.groq import build_llm_client
 from setuppilot.logging_setup import setup_logging
+from setuppilot.tools.clone import CloneRequest
 from setuppilot.web.serve import serve
 
 # PROVISIONAL: gpt-oss reasoning tokens count toward this, so leave room past the answer.
@@ -127,7 +128,9 @@ def set_up_repo(settings: Settings, args: argparse.Namespace) -> bool:
     agent = make_agent(settings, stores)
     outcome: Waiting | Stopped | Finished
     if args.command == "run":
-        outcome = agent.start(args.repo_url, resolve_destination(args.dest), args.docker)
+        outcome = agent.start(
+            args.repo_url, resolve_destination(args.dest), args.docker, CloneRequest("public", None)
+        )
     else:
         if stores.runs.get_run(args.run_id).status == "cancelled":
             print("This run was cancelled. Start a new run instead.", file=sys.stderr)

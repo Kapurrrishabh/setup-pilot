@@ -24,7 +24,9 @@ def build_agent(
         settings=settings,
         runs=stores.runs,
         llm=llm,
-        clone=lambda ref, dest: clone_repo(ref, dest, settings.repo, check_github_repo),
+        clone=lambda ref, dest, request: clone_repo(
+            ref, dest, settings.repo, check_github_repo, request
+        ),
         probe=SystemToolProbe(),
         run=lambda command: run_command(command, settings.runner, on_start=on_start),
         host=HOST_TARGET,

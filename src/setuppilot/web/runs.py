@@ -13,7 +13,7 @@ from setuppilot.db.runs import FINISHED_STATUSES, Run, RunStore
 from setuppilot.errors import SetupPilotError
 from setuppilot.guardrails.process_tree import ProcessTree
 from setuppilot.logging_setup import run_id_var
-from setuppilot.tools.clone import repo_folder
+from setuppilot.tools.clone import CloneRequest, repo_folder
 from setuppilot.tools.github_url import parse_github_url
 from setuppilot.web.labels import duration_text, step_tone
 
@@ -58,7 +58,11 @@ class RunManager:
     def start(self, repo_url: str, dest_dir: str, use_docker: bool) -> str:
         run = self._runs.create_run(repo_url, dest_dir)
         self._in_background(
-            run.id, lambda: self._agent.begin(run.id, repo_url, dest_dir, use_docker), command=None
+            run.id,
+            lambda: self._agent.begin(
+                run.id, repo_url, dest_dir, use_docker, CloneRequest("public", None)
+            ),
+            command=None,
         )
         return run.id
 

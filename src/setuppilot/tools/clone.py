@@ -7,7 +7,9 @@ import subprocess
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from setuppilot.config import RepoConfig
 from setuppilot.errors import CloneFailed, PrereqMissing
@@ -146,8 +148,24 @@ def repo_folder(ref: RepoRef, dest_dir: Path) -> Path:
     return dest_dir / ref.name
 
 
-def clone_repo(ref: RepoRef, dest_dir: Path, config: RepoConfig, repo_check: RepoCheck) -> Path:
+@dataclass(frozen=True)
+class CloneRequest:
+    """How a run reaches its repo: "public" needs no sign-in; "github" uses the signed-in user.
+    subdir, when set, is the one project folder of a monorepo to check out."""
+
+    access: Literal["public", "github"]
+    subdir: str | None
+
+
+def clone_repo(
+    ref: RepoRef, dest_dir: Path, config: RepoConfig, repo_check: RepoCheck, request: CloneRequest
+) -> Path:
     """Clone into dest_dir/<repo name>. Returns the new folder."""
+    if request != CloneRequest("public", None):
+        raise CloneFailed(
+            "Signed-in and sub-folder clones are not available in this build.",
+            details="Use a public repo URL without a sub-folder.",
+        )
     if not dest_dir.is_dir():
         raise CloneFailed(
             "The destination folder does not exist.", details=f"Create {dest_dir} first."
