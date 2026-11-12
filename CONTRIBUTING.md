@@ -4,17 +4,25 @@ SetupPilot runs commands on people's machines, so the safety rules come first.
 
 ## Set up
 
-```bash
-git clone https://github.com/Kapurrrishabh/setup-pilot.git setuppilot && cd setuppilot
+```
+git clone https://github.com/Kapurrrishabh/setup-pilot.git setuppilot
+cd setuppilot
 uv sync
 uv run pre-commit install   # lint and format each commit
 ```
 
 ## Before you open a pull request
 
-```bash
-./test.sh basics   # the same lint, format, type and test checks CI runs
+```powershell
+.\test.ps1 basics   # the same lint, format, type and test checks CI runs
 ```
+
+On macOS and Linux, run `./test.sh basics`. If PowerShell says running scripts is disabled, run
+`uv run python scripts/acceptance.py basics`: both scripts only run that file, so a new check for
+other machines goes there, not in either script. It checks types for Windows, macOS and Linux
+wherever you run it, because mypy skips the code written for the other systems. The 90% gate on
+`src/setuppilot/guardrails/` is measured on macOS and Linux; it leaves out the Windows-only part of
+`process_tree.py`, which only the Windows CI job tests.
 
 Database tests need a local Postgres with pgvector. Set `TEST_DATABASE_URL`; the database name
 must end in `_test`, because the tests empty every table. Never point it at Supabase.

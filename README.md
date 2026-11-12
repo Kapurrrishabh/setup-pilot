@@ -48,9 +48,11 @@ uv run setuppilot db-check # optional: checks the database and makes the tables
 uv run setuppilot web      # open http://127.0.0.1:5005
 ```
 
-Check that it works: `./test.sh basics` (lint, types and about 750 tests; no internet or keys
-needed), and `uv run setuppilot ask "What is uv?"` (one real Groq call; prints the answer and
-tokens used). Run `uv run setuppilot --version` to see which version you have.
+Check that it works: `.\test.ps1 basics` on Windows or `./test.sh basics` on macOS and Linux
+(lint, types and about 1,300 tests; no internet or keys needed; if PowerShell says running
+scripts is disabled, run `uv run python scripts/acceptance.py basics` instead), and
+`uv run setuppilot ask "What is uv?"` (one real Groq call; prints the answer and tokens used).
+Run `uv run setuppilot --version` to see which version you have.
 
 Before real use, copy your Groq limits from https://console.groq.com/settings/limits into
 `config.yaml`. The numbers there now are only a starting guess.
@@ -232,32 +234,39 @@ a Supabase project or another machine:
 
 | What | Why it is not done yet | How to run it |
 |---|---|---|
-| Real Groq calls: `ask`, README tips and the AI report in a run, tokens per run (the setup table's Tokens column; `setuppilot show <run id>` lists each call) | no Groq key on the build laptop | `./test.sh groq setup` |
-| Chatbot full answers and "I don't know" (target 80%+ grounded) | no Groq key | `./test.sh chat` |
-| Real Supabase: tables, row level security, pause and resume across a restart, cached replay | no Supabase project yet | `./test.sh supabase chat` |
-| The 15-repo setup evaluation on Linux or Windows | only macOS tried | `./test.sh setup`; on Windows `uv run setuppilot eval-setup` |
-| Windows: Cancel and the time limit stopping every process, `.cmd` tools like npm, Docker Desktop | written from the Windows docs; only the Windows CI job tests it | run a setup and press Cancel |
-| Docker mode and Compose on Docker Desktop, and whether a container can reach the web app | only Colima tried | `./test.sh docker` |
+| Real Groq calls: `ask`, README tips and the AI report in a run, tokens per run (the setup table's Tokens column; `setuppilot show <run id>` lists each call) | no Groq key on the build laptop | `.\test.ps1 groq setup` |
+| Chatbot full answers and "I don't know" (target 80%+ grounded) | no Groq key | `.\test.ps1 chat` |
+| Real Supabase: tables, row level security, pause and resume across a restart, cached replay | no Supabase project yet | `.\test.ps1 supabase chat` |
+| The 15-repo setup evaluation on Windows or Linux | only macOS tried | `.\test.ps1 setup` |
+| Windows: Cancel and the time limit stopping every process, `.cmd` tools like npm, Docker Desktop | written from the Windows docs; only the Windows CI job tests it | `.\test.ps1 setup docker browser`, then run a setup and press Cancel while it installs |
+| Docker mode and Compose on Docker Desktop, and whether a container can reach the web app | only Colima tried | `.\test.ps1 docker` |
 | The web app in Firefox and Safari | only Chrome tried | by hand (steps below) |
 | LangSmith tracing (optional) | no LangSmith key | set `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY` in `.env`, run a setup, look for the trace |
 
-How to run them:
+How to run them on Windows, in PowerShell:
 
-```bash
-cp .env.example .env    # add GROQ_API_KEY and SUPABASE_DB_URL (Session pooler string)
-./test.sh               # every part this machine can run
-./test.sh groq chat     # or only some parts: basics groq supabase setup docker chat browser
+```powershell
+copy .env.example .env    # add GROQ_API_KEY and SUPABASE_DB_URL (Session pooler string)
+.\test.ps1                # every part this machine can run
+.\test.ps1 groq chat      # or only some parts: basics groq supabase setup docker chat browser
 ```
 
-Each part says PASS, FAIL or SKIP (with what it needs). Results go to
+On macOS and Linux, use `cp` and `./test.sh` the same way. Both scripts only run
+`uv run python scripts/acceptance.py` with the parts you name, so you can also run that yourself
+(for example when PowerShell says running scripts is disabled on this system).
+
+Each part says PASS, FAIL or SKIP (with what it needs). An evaluation only passes if it ran to
+the end: one stopped by a limit fails, whatever its scores. Results go to
 `test-results/<time>-<machine>/` (the log, the summary and the eval tables); send that folder to
-the team. It holds no secrets. Clones go to `~/setuppilot-test/` (not Desktop or Documents,
-because Docker cannot read those on macOS); delete it when done. The `setup` part needs the
-stacks' tools (uv, node and npm, pnpm, poetry, go, cargo, ruby and bundler, java and maven,
-docker); a missing tool shows as PrereqMissing in the table. The `browser` part needs Google
-Chrome (or run `uv run --group e2e playwright install chromium` and set
-`SETUPPILOT_E2E_BROWSER=chromium`); without it, that part is skipped. `test.sh` needs bash: WSL
-can run it on Windows, but that tests Linux, not Windows.
+the team. It holds no secrets. Clones go to `setuppilot-test` in your home folder (not Desktop,
+Documents or Downloads: Docker cannot read those on macOS, and OneDrive often syncs them on
+Windows); delete it when done. The `setup` part needs the stacks' tools (uv, node and npm, pnpm,
+poetry, go, cargo, ruby and bundler, java and maven, docker); a missing tool shows as
+PrereqMissing in the table. The `browser` part needs Google Chrome (or run
+`uv run --group e2e playwright install chromium` and set `SETUPPILOT_E2E_BROWSER=chromium`; in
+PowerShell, `$env:SETUPPILOT_E2E_BROWSER = "chromium"`); without it, that part is skipped. On
+Windows, `basics` runs the tests the way the Windows CI job does, and leaves the coverage gate to
+macOS and Linux.
 
 By hand, in Firefox and Safari: open http://127.0.0.1:5005, start a setup of
 `https://github.com/pypa/sampleproject`, press Edit and try `rm -rf /` (it must be refused),
