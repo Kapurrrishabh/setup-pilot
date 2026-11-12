@@ -13,10 +13,12 @@ from setuppilot.guardrails.commands import NODE_MANAGERS as _NODE_MANAGERS
 from setuppilot.guardrails.runner import CommandOutput
 from setuppilot.tools.compose import MAX_READ_BYTES, find_compose_files
 from setuppilot.tools.detect import StackCandidate
+from setuppilot.tools.scan import scan_repo
 
 _PYTHON_MANAGERS = {"pip", "uv", "poetry", "pipenv", "pdm"}
 SUPPORTED_MANAGERS = _PYTHON_MANAGERS | _NODE_MANAGERS | {
-    "conda", "go", "cargo", "bundler", "maven", "gradle", "compose",
+    "conda", "go", "cargo", "bundler", "maven", "gradle", "compose", "dotnet", "composer",
+    "dart", "flutter",
 }  # fmt: skip
 # conda puts python.exe at the top of a Windows environment, not in bin/.
 _CONDA_PYTHON: dict[ExecTarget, str] = {
@@ -29,6 +31,11 @@ _MAVEN_REPO = "-Dmaven.repo.local=.m2/repository"
 # settings (like `system = true`) can send packages anywhere else.
 _UV_TARGET = "--python .venv"
 _NOT_PACKAGES = {"tests", "test", "docs", "doc", "examples", "scripts", "benchmarks"}
+# The commands quiet_checks runs, so a plan can leave out an AI check that only repeats one.
+QUIET_COMMANDS = dict.fromkeys(_PYTHON_MANAGERS, f"uv pip check {_UV_TARGET}") | {
+    "npm": "npm ls --depth=0",
+    "composer": "composer check-platform-reqs --no-plugins",
+}
 
 
 @dataclass(frozen=True)
@@ -90,6 +97,16 @@ def install_plan(
             return [
                 PlannedCommand(command, "Build and start the services, and wait until healthy.")
             ]
+        case "dotnet":
+            # With more than one project file, dotnet must be told which one.
+            command = f"dotnet restore {candidate.evidence[0]}"
+            return [PlannedCommand(command, "Download the NuGet packages.")]
+        case "composer":
+            command = "composer install --no-interaction"
+            return [PlannedCommand(command, "Install the PHP packages into vendor/.")]
+        case "dart" | "flutter":
+            command = f"{candidate.manager} pub get"
+            return [PlannedCommand(command, "Download the Dart packages.")]
     raise StackNotFound(
         f"SetupPilot cannot set up a {candidate.stack} project with {candidate.manager} yet.",
         details="Set it up by hand for now, using the repo's README.",
@@ -161,6 +178,9 @@ def code_checks(
         case "gradle":
             command = f"{_java_program(candidate, target)} assemble"
             return [PlannedCommand(command, "Check: it builds.")]
+        case "dotnet":
+            command = f"dotnet build {candidate.evidence[0]} --no-restore"
+            return [PlannedCommand(command, "Check: the .NET code builds (runs its build steps).")]
     return []
 
 
@@ -173,9 +193,7 @@ def quiet_checks(
     manager = candidate.manager
     if manager in _PYTHON_MANAGERS:
         checks.append(_exists(repo, VENV_PYTHON[target], "Python environment exists"))
-        checks.append(
-            _exit_zero(run(f"uv pip check {_UV_TARGET}"), "Installed packages fit together")
-        )
+        checks.append(_exit_zero(run(QUIET_COMMANDS[manager]), "Installed packages fit together"))
     elif manager == "conda":
         checks.append(_exists(repo, _CONDA_PYTHON[target], "Conda environment exists"))
     elif manager in _NODE_MANAGERS:
@@ -187,14 +205,25 @@ def quiet_checks(
         else:
             checks.append(_exists(repo, "node_modules", "node_modules exists"))
             if manager == "npm":
-                checks.append(
-                    _exit_zero(run("npm ls --depth=0"), "All listed Node packages are installed")
-                )
+                output = run(QUIET_COMMANDS[manager])
+                checks.append(_exit_zero(output, "All listed Node packages are installed"))
     elif manager == "compose":
         compose_file = candidate.evidence[0]
         (found,) = find_compose_files(repo, (compose_file,))
         output = run(f"docker compose -f {compose_file} ps --all --format json")
         checks.append(_services_running(output, found.services))
+    elif manager == "dotnet":
+        # Each project writes its own obj/ folder, so a solution has one per project.
+        restored = any(f.endswith("obj/project.assets.json") for f in scan_repo(repo).files)
+        detail = "obj/project.assets.json " + ("found." if restored else "is missing.")
+        checks.append(Check("NuGet packages are restored", restored, detail))
+    elif manager == "composer":
+        checks.append(_exists(repo, "vendor/autoload.php", "PHP packages are installed"))
+        output = run(QUIET_COMMANDS[manager])
+        checks.append(_exit_zero(output, "PHP and its extensions fit the packages"))
+    elif manager in ("dart", "flutter"):
+        path = ".dart_tool/package_config.json"
+        checks.append(_exists(repo, path, "Dart packages are installed"))
     return checks
 
 

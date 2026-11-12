@@ -55,6 +55,10 @@ def quiet_checks(candidate, repo, run, target="posix"):
         (cand("java", "gradle", ["build.gradle"]), set(), ["gradle dependencies"]),
         (cand("docker", "compose", ["compose.yaml"]), set(),
          ["docker compose -f compose.yaml up -d --build --wait"]),
+        (cand("dotnet", "dotnet", ["All.sln", "global.json"]), set(), ["dotnet restore All.sln"]),
+        (cand("php", "composer", ["composer.json"]), set(), ["composer install --no-interaction"]),
+        (cand("dart", "dart", ["pubspec.yaml"]), set(), ["dart pub get"]),
+        (cand("dart", "flutter", ["pubspec.yaml"]), set(), ["flutter pub get"]),
     ],
 )  # fmt: skip
 def test_install_plan_for_each_stack(candidate, top, expected):
@@ -78,10 +82,41 @@ def test_stack_without_a_plan_says_so_plainly():
         (cand("java", "gradle", ["build.gradle", "gradlew"]), (), ["./gradlew assemble"]),
         (cand("node", "npm"), (), []),
         (cand("ruby", "bundler"), (), ["bundle check"]),
+        (cand("dotnet", "dotnet", ["App.csproj"]), (), ["dotnet build App.csproj --no-restore"]),
+        (cand("php", "composer"), (), []),
     ],
 )  # fmt: skip
 def test_checks_that_run_project_code_for_each_stack(candidate, files, expected):
     assert texts(code_checks(candidate, files)) == expected
+
+
+@pytest.mark.parametrize("is_restored", [True, False])
+def test_dotnet_check_looks_for_restored_packages_in_any_project_folder(tmp_path, is_restored):
+    if is_restored:
+        (tmp_path / "src/App/obj").mkdir(parents=True)
+        (tmp_path / "src/App/obj/project.assets.json").write_text("{}", encoding="utf-8")
+    (check,) = quiet_checks(cand("dotnet", "dotnet", ["All.sln"]), tmp_path, lambda t: output())
+    assert check.is_passed is is_restored
+
+
+def test_composer_check_needs_the_autoloader_and_fitting_php_extensions(tmp_path):
+    (tmp_path / "vendor").mkdir()
+    (tmp_path / "vendor/autoload.php").write_text("<?php", encoding="utf-8")
+    ran = []
+
+    def run(text):
+        ran.append(text)
+        return output(1, "ext-intl is missing")
+
+    checks = quiet_checks(cand("php", "composer"), tmp_path, run)
+    assert [c.is_passed for c in checks] == [True, False]
+    assert ran == ["composer check-platform-reqs --no-plugins"]
+
+
+@pytest.mark.parametrize("manager", ["dart", "flutter"])
+def test_dart_check_needs_the_package_config(tmp_path, manager):
+    (check,) = quiet_checks(cand("dart", manager), tmp_path, lambda t: output())
+    assert (check.is_passed, ".dart_tool/package_config.json" in check.detail) == (False, True)
 
 
 @pytest.mark.parametrize(

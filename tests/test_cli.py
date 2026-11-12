@@ -119,6 +119,16 @@ def test_run_asks_before_each_command_and_reports(in_empty_project, monkeypatch,
     assert code == 0 and "Command: uv venv .venv" in out and "Setup verified" in out
 
 
+def test_run_with_subdir_sets_up_only_that_folder(in_empty_project, monkeypatch, capsys):
+    files = {"requirements.txt": "", "web/package.json": "{}", "web/package-lock.json": "{}"}
+    use_fake_agent(monkeypatch, make_repo(in_empty_project / "source", files))
+    (in_empty_project / "dest").mkdir()
+    argv = ["run", "https://github.com/someone/demo", "dest", "--subdir", "web"]
+    code = run_cli_with_answers(monkeypatch, ["a"], argv)
+    out = capsys.readouterr().out
+    assert code == 0 and "Command: npm ci" in out and "uv venv" not in out
+
+
 def test_quitting_without_a_database_says_the_run_cannot_be_resumed(
     in_empty_project, monkeypatch, capsys
 ):

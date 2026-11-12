@@ -12,7 +12,14 @@ from setuppilot.guardrails.commands import NODE_MANAGERS as _NODE_MANAGERS
 from setuppilot.tools.compose import COMPOSE_NAMES, MAX_READ_BYTES
 from setuppilot.tools.scan import RepoScan
 
-Stack = Literal["python", "node", "go", "rust", "ruby", "java", "docker"]
+Stack = Literal["python", "node", "go", "rust", "ruby", "java", "docker", "dotnet", "php", "dart"]
+STACK_FOR_MANAGER: dict[str, Stack] = {
+    "pip": "python", "uv": "python", "poetry": "python", "pipenv": "python", "pdm": "python",
+    "conda": "python", "npm": "node", "yarn": "node", "pnpm": "node", "bun": "node", "go": "go",
+    "cargo": "rust", "bundler": "ruby", "maven": "java", "gradle": "java", "compose": "docker",
+    "dockerfile": "docker", "dotnet": "dotnet", "composer": "php", "dart": "dart",
+    "flutter": "dart",
+}  # fmt: skip
 
 # Lock files name the package manager. Two of them for one stack is a conflict.
 _LOCKS: dict[Stack, tuple[tuple[str, str], ...]] = {
@@ -31,10 +38,15 @@ _LOCKS: dict[Stack, tuple[tuple[str, str], ...]] = {
         ("npm-shrinkwrap.json", "npm"),
     ),
 }
+LOCK_FILES = frozenset(
+    {lock for locks in _LOCKS.values() for lock, _ in locks}
+    | {"Cargo.lock", "Gemfile.lock", "go.sum", "composer.lock", "pubspec.lock"}
+    | {"packages.lock.json", "gradle.lockfile", "conda-lock.yml"}
+)
 _PYTHON_MANIFESTS = ("pyproject.toml", "setup.py", "setup.cfg", "Pipfile")
 _CONDA_FILES = ("environment.yml", "environment.yaml")
 _GRADLE_FILES = ("build.gradle.kts", "build.gradle", "settings.gradle.kts", "settings.gradle")
-_TOP_MANIFESTS = (
+MANIFEST_NAMES = (
     "package.json",
     "pyproject.toml",
     "requirements.txt",
@@ -45,11 +57,15 @@ _TOP_MANIFESTS = (
     "pom.xml",
     "build.gradle",
     "build.gradle.kts",
+    "composer.json",
+    "pubspec.yaml",
     "Dockerfile",
     *COMPOSE_NAMES,
 )
-# A version hint is short and plain, like "3.11", ">=18" or "1.80"; anything else is dropped.
-_VERSION_HINT = re.compile(r"[0-9A-Za-z.*^~<>=!][0-9A-Za-z.*^~<>=!, _-]{0,39}")
+# .NET projects are named after the project, so they are found by their ending.
+DOTNET_SUFFIXES = (".sln", ".slnx", ".csproj", ".fsproj", ".vbproj")
+# A version hint is short and plain, like "3.11", ">=18" or "^7.4 || ^8.0"; others are dropped.
+_VERSION_HINT = re.compile(r"[0-9A-Za-z.*^~<>=!][0-9A-Za-z.*^~<>=!|, _-]{0,39}")
 
 
 @dataclass(frozen=True)
@@ -103,6 +119,7 @@ def detect_stacks(scan: RepoScan) -> Detection:
     java = _java(top)
     candidates += java
     conflicts += _lock_conflict("Java", java)
+    candidates += _dotnet(top, reader) + _php(top, reader) + _dart(top, reader)
     compose = sorted(top & set(COMPOSE_NAMES), key=COMPOSE_NAMES.index)
     if compose:
         candidates.append(StackCandidate("docker", "compose", tuple(compose), None))
@@ -116,11 +133,11 @@ def detect_stacks(scan: RepoScan) -> Detection:
 def _repo_notes(scan: RepoScan, top: set[str], reader: "_ManifestReader") -> list[str]:
     notes = []
     deeper = sorted(
-        f for f in scan.files if f.count("/") == 1 and f.split("/")[1] in _TOP_MANIFESTS
+        f for f in scan.files if f.count("/") == 1 and f.split("/")[1] in MANIFEST_NAMES
     )
     if deeper:
-        notes.append("Sub-projects in folders (not set up automatically): " + ", ".join(deeper))
-    linked = sorted(f for f in scan.skipped_symlinks if f in _TOP_MANIFESTS)
+        notes.append("Projects in sub-folders: " + ", ".join(deeper) + ".")
+    linked = sorted(f for f in scan.skipped_symlinks if f in MANIFEST_NAMES)
     if linked:
         notes.append("These setup files are links and were not read: " + ", ".join(linked))
     if scan.skipped_dirs:
@@ -212,6 +229,37 @@ def _java(top: set[str]) -> list[StackCandidate]:
     if gradle:
         found.append(StackCandidate("java", "gradle", (gradle, *wrappers("gradle")), None))
     return found
+
+
+def _dotnet(top: set[str], reader: "_ManifestReader") -> list[StackCandidate]:
+    # A solution builds all of its projects, so it comes before a single project file.
+    found = sorted(
+        (f for f in top if f.endswith(DOTNET_SUFFIXES)),
+        key=lambda f: (not f.endswith((".sln", ".slnx")), f),
+    )
+    if not found:
+        return []
+    has_global = "global.json" in top
+    sdk = _dig(reader.json("global.json"), "sdk", "version") if has_global else None
+    evidence = (found[0], *(("global.json",) if has_global else ()))
+    return [StackCandidate("dotnet", "dotnet", evidence, reader.hint(sdk, "global.json"))]
+
+
+def _php(top: set[str], reader: "_ManifestReader") -> list[StackCandidate]:
+    if "composer.json" not in top:
+        return []
+    php = _dig(reader.json("composer.json"), "require", "php")
+    evidence = (*(("composer.lock",) if "composer.lock" in top else ()), "composer.json")
+    return [StackCandidate("php", "composer", evidence, reader.hint(php, "composer.json"))]
+
+
+def _dart(top: set[str], reader: "_ManifestReader") -> list[StackCandidate]:
+    if "pubspec.yaml" not in top:
+        return []
+    # A Flutter app lists the Flutter SDK itself as a dependency: `flutter: {sdk: flutter}`.
+    is_flutter = re.search(r"^\s+sdk:\s*flutter\s*$", reader.text("pubspec.yaml") or "", re.M)
+    evidence = ("pubspec.yaml", *(("pubspec.lock",) if "pubspec.lock" in top else ()))
+    return [StackCandidate("dart", "flutter" if is_flutter else "dart", evidence, None)]
 
 
 def _lock_conflict(label: str, found: list[StackCandidate]) -> list[str]:

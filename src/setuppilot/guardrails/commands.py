@@ -2,6 +2,7 @@
 
 import re
 import shlex
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -45,6 +46,15 @@ ALLOWED: dict[str, Rule] = {
         ("compose", "down"),
     ),
     "git": (("submodule", "update", "--init"),),
+    # MSBuild and Composer run the project's own build targets and scripts, as npm does.
+    "dotnet": (("restore",), ("build",)),
+    "composer": (
+        ("install",),
+        ("validate", "--no-check-publish"),
+        ("check-platform-reqs", "--no-plugins"),
+    ),
+    "dart": (("pub", "get"),),
+    "flutter": (("pub", "get"),),
 }
 VENV_PYTHON: dict[ExecTarget, str] = {
     "posix": ".venv/bin/python",
@@ -74,6 +84,25 @@ _BLOCKED_FLAGS = {"--system", "--break-system-packages", "--user", "-g", "--glob
 _TOOL_BLOCKED_FLAGS = {
     "go": {"toolexec", "exec", "ldflags", "gccgoflags"},
     "cargo": {"config", "Z"},
+    # -t:Run starts the built program, and a logger loads any code. MSBuild ignores case.
+    "dotnet": {"t", "target", "logger", "l", "distributedlogger", "dl"},
+}
+# MSBuild's -p can set any property, and some run a program (PreBuildEvent) or load a file
+# (CustomBeforeMicrosoftCommonTargets), so only these may be set.
+_DOTNET_PROPERTY = re.compile(r"(?:--?|/)(?:p|property|rp|restoreproperty)(?::(.*))?", re.I | re.S)
+_DOTNET_PROPERTIES = ("Configuration", "TargetFramework")
+# Never taken from the AI: they pick where packages come from or which program runs the scripts,
+# and a README or a build's output can ask for them. You can still type them in an edit.
+_NOT_FROM_THE_AI = {
+    "--index-url", "--extra-index-url", "--default-index", "--index", "--find-links",
+    "--registry", "--script-shell", "--source", "--configfile", "--userconfig",
+}  # fmt: skip
+_NOT_FROM_THE_AI_SHORT = {"uv": ("-i", "-f"), "dotnet": ("-s",)}
+# uv must be told the repo's .venv, so a parent folder's venv or the repo's own uv settings
+# cannot send packages anywhere else. Checked on edits too, not only on SetupPilot's plans.
+_REQUIRED_ARGS: dict[tuple[str, ...], tuple[str, ...]] = {
+    ("uv", "pip", "install"): ("--python", ".venv"),
+    ("uv", "pip", "check"): ("--python", ".venv"),
 }
 NODE_MANAGERS = {"npm", "yarn", "pnpm", "bun"}
 _SHELL_PARTS = (";", "|", "&", "`", "$(", "\n", "\r", "\x00")
@@ -86,7 +115,7 @@ WINDOWS_DRIVE = re.compile(r"[A-Za-z]:")
 
 @dataclass(frozen=True)
 class SafeCommand:
-    """A command that passed the checks. Build it only with validate_command."""
+    """A command that passed the checks. Build it only with validate_command or recipe_command."""
 
     argv: tuple[str, ...]
     cwd: Path
@@ -130,9 +159,41 @@ def validate_command(text: str, guard: PathGuard, target: ExecTarget) -> SafeCom
             raise _blocked(text, f"Only these goals are allowed: {', '.join(sorted(allowed))}.")
     if words[:1] == ("-c",) and (len(argv) != 3 or not _IMPORT_ONLY.fullmatch(argv[2])):
         raise _blocked(text, "python -c may only run one 'import module' line.")
+    _check_required(name, argv, text)
     for arg in argv[1:]:
         _check_arg(arg, guard, text)
     return SafeCommand((program, *argv[1:]), guard.workspace, text, None)
+
+
+def validate_ai_command(text: str, guard: PathGuard, target: ExecTarget) -> SafeCommand:
+    """validate_command, for a command the AI wrote: some flags are only taken from you."""
+    command = validate_command(text, guard, target)
+    argv = split_command(text)
+    short = _NOT_FROM_THE_AI_SHORT.get(_program_name(argv[0], target).rsplit("/", 1)[-1], ())
+    for arg in argv[1:]:
+        flag = arg.split("=", 1)[0]
+        if flag in _NOT_FROM_THE_AI or flag.endswith(":registry") or arg.startswith(short):
+            raise _blocked(
+                text,
+                f"{arg!r} can change where packages come from or what runs the scripts, so "
+                "SetupPilot does not take it from the AI. Run it yourself if you trust it.",
+            )
+    return command
+
+
+def _check_required(name: str, argv: list[str], text: str) -> None:
+    for (program, *sub), (flag, value) in _REQUIRED_ARGS.items():
+        if name != program or argv[1 : 1 + len(sub)] != sub:
+            continue
+        args = argv[1 + len(sub) :]
+        given = [args[i + 1] if i + 1 < len(args) else "" for i, a in enumerate(args) if a == flag]
+        given += [a.split("=", 1)[1] for a in args if a.startswith(f"{flag}=")]
+        # uv also reads -p, alone or glued to other short flags; only the long form is allowed.
+        short = [a for a in args if re.fullmatch(r"-[A-Za-z]*p.*", a)]
+        if given != [value] or short:
+            raise _blocked(
+                text, f"Add {flag} {value} once (not -p), so packages go only into {value}."
+            )
 
 
 def _words_to_match(argv: list[str]) -> tuple[str, ...]:
@@ -170,11 +231,26 @@ def _check_flag(arg: str, program: str, text: str) -> None:
         program in NODE_MANAGERS and re.fullmatch(r"-[A-Za-z]*g[A-Za-z]*", arg)
     ):
         raise _blocked(text, f"{arg!r} installs outside this project.")
+    # MSBuild writes switches as -name:value or /name:value, and reads more from an @file.
+    is_dotnet = program == "dotnet"
+    name = flag.lstrip("-/" if is_dotnet else "-").split(":", 1)[0]
+    name = name.lower() if is_dotnet else name
+    is_switch = arg.startswith("-") or (is_dotnet and arg.startswith("/"))
     is_glued_cargo_z = program == "cargo" and arg.startswith("-Z")  # -Zbuild-std and friends
-    if is_glued_cargo_z or (
-        arg.startswith("-") and flag.lstrip("-") in _TOOL_BLOCKED_FLAGS.get(program, set())
+    is_response_file = is_dotnet and arg.startswith("@")
+    if (
+        is_glued_cargo_z
+        or is_response_file
+        or (is_switch and name in _TOOL_BLOCKED_FLAGS.get(program, set()))
     ):
         raise _blocked(text, f"{arg!r} could make {program} run another program.")
+    if is_dotnet and (switch := _DOTNET_PROPERTY.fullmatch(arg)):
+        # -p:A=1,B=2 sets two properties, so each one is checked.
+        pairs = re.split(r"[,;]", switch[1] or "")
+        allowed = {known.lower() for known in _DOTNET_PROPERTIES}
+        if not all("=" in p and p.split("=", 1)[0].lower() in allowed for p in pairs):
+            names = " or ".join(_DOTNET_PROPERTIES)
+            raise _blocked(text, f"{arg!r}: only -p:Name=Value is allowed, with Name {names}.")
 
 
 def _check_arg(arg: str, guard: PathGuard, text: str) -> None:
@@ -207,6 +283,94 @@ def _inside(path: str, guard: PathGuard, text: str) -> Path:
         return guard.check(path)
     except PathBlocked as error:
         raise _blocked(text, error.details) from error
+
+
+def command_verb(text: str, target: ExecTarget) -> tuple[str, ...] | None:
+    """The program and the allowed form it starts with, like ("npm", "ci"), or None when it is
+    not allowed. A repo's Maven or Gradle wrapper counts as mvn or gradle."""
+    try:
+        argv = split_command(text)
+    except ValueError:
+        return None
+    if not argv:
+        return None
+    name = _program_name(argv[0], target)
+    workspace = {_program_name(key, target): key for key in WORKSPACE_PROGRAMS[target]}
+    if name in workspace:
+        key = workspace[name]
+        rule = WORKSPACE_PROGRAMS[target][key]
+        tools = {wrapper: tool for tool, wrapper in JAVA_WRAPPERS[target].items()}
+        program = {"maven": "mvn", "gradle": "gradle"}.get(tools.get(key, ""), "python")
+    elif name in ALLOWED:
+        program, rule = name, ALLOWED[name]
+    else:
+        return None
+    words = _words_to_match(argv)
+    prefix = next((p for p in rule if words[: len(p)] == p), None)
+    return None if prefix is None else (program, *prefix)
+
+
+def allowlist_digest(target: ExecTarget) -> str:
+    """The allowlist in a few lines, for the LLM. Made from the rules, so it cannot drift."""
+
+    # Whole command starts, with required arguments written in: tried on real Groq, a rule at
+    # the end was missed, and "mvn: compile" got its colon copied into commands.
+    def forms(program: str, rule: Rule) -> str:
+        def form(prefix: tuple[str, ...]) -> str:
+            if prefix == ("-c",):
+                return f'{program} -c "import <module>"'
+            return " ".join((program, *prefix, *_REQUIRED_ARGS.get((program, *prefix), ())))
+
+        return " | ".join(form(p) for p in rule)
+
+    lines = [forms(program, rule) for program, rule in ALLOWED.items()]
+    lines += [
+        forms(key if key.startswith(".") else "./" + key, rule)
+        for key, rule in WORKSPACE_PROGRAMS[target].items()
+    ]
+    lines.append(
+        "Rules: one command, no shell characters (; | & > < ` $( ), never "
+        + ", ".join(sorted(_NEVER))
+        + ". No .., ~ or absolute paths: stay in the project folder. No "
+        + ", ".join(sorted(_BLOCKED_FLAGS))
+        + ". mvn and gradle may only run the goals listed. Use / in paths."
+    )
+    return "\n".join(lines)
+
+
+# How SetupPilot may install a tool. The package name comes from a fixed table, never from the AI
+# or the user; these forms keep even that table from building any other command.
+RecipeKind = Literal["winget", "brew", "uv_tool"]
+_RECIPE_ARGV: dict[RecipeKind, Callable[[str], tuple[str, ...]]] = {
+    # Flags from https://learn.microsoft.com/en-us/windows/package-manager/winget/install
+    "winget": lambda name: (
+        "winget",
+        "install",
+        "--id",
+        name,
+        "-e",
+        "--source",
+        "winget",
+        "--accept-source-agreements",
+        "--accept-package-agreements",
+        "--disable-interactivity",
+    ),  # fmt: skip
+    "brew": lambda name: ("brew", "install", name),
+    # Installs for you only (no admin rights), into uv's own tool folder.
+    "uv_tool": lambda name: ("uv", "tool", "install", name),
+}
+_RECIPE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+_-]{0,60}")
+
+
+def recipe_command(kind: RecipeKind, name: str, cwd: Path) -> SafeCommand:
+    """cwd should be an empty folder, so no repo file can change what the installer does."""
+    if not _RECIPE_NAME.fullmatch(name):
+        raise CommandBlocked(
+            "This install command is not one SetupPilot knows, so it was not run.",
+            details=f"The {kind} package name {name!r} has characters no package name has.",
+        )
+    argv = _RECIPE_ARGV[kind](name)
+    return SafeCommand(argv, cwd, " ".join(argv), None)
 
 
 def _blocked(text: str, reason: str) -> CommandBlocked:

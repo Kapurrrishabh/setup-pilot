@@ -84,6 +84,46 @@ def reply_citing(path: str, text: str = "An answer [1].", found: bool = True):
     return reply_for
 
 
+def ai_step(command, phase="install", is_manual=False, reason="the README says so") -> dict:
+    return {"phase": phase, "command": command, "reason": reason, "is_manual": is_manual}
+
+
+def ai_project(path=".", manager="pip", steps=(), **changes) -> dict:
+    """One project in the AI's analysis, in the strict schema's shape."""
+    project = {
+        "path": path, "name": "demo", "role": "app", "languages": ["python"], "frameworks": [],
+        "package_manager": manager, "runtime": None, "tools": [], "env": [], "services": [],
+        "steps": list(steps), "start_command": None, "evidence": ["requirements.txt"],
+    }  # fmt: skip
+    return project | changes
+
+
+def analysis_reply(*projects, notes=(), summary="A small demo repo.") -> Reply:
+    """The AI's answer to the analyze call."""
+    import json
+
+    body = {"summary": summary, "projects": list(projects), "notes": list(notes)}
+    return reply(json.dumps(body), input_tokens=900, output_tokens=300)
+
+
+def diagnosis_reply(
+    commands=(), category="dependency_conflict", missing_tools=(), user_action=None,
+    explanation="The lock file is older than package.json.",
+) -> Reply:  # fmt: skip
+    """The AI's answer to the diagnose call. commands: (command, reason) pairs."""
+    import json
+
+    body = {
+        "category": category,
+        "explanation": explanation,
+        "needs_user": user_action is not None,
+        "user_action": user_action,
+        "missing_tools": list(missing_tools),
+        "commands": [{"command": c, "reason": r} for c, r in commands],
+    }
+    return reply(json.dumps(body), input_tokens=700, output_tokens=200)
+
+
 def make_client(
     transport, config=None, budget=BUDGET, usage=None, cache=None, clock=None, metrics=None
 ):

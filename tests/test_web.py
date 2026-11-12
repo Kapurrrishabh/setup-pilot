@@ -173,6 +173,41 @@ def test_only_known_answers_are_accepted(web, reply_body):
     assert answer(web, run_id, view, reply_body).status_code == 400
 
 
+@pytest.mark.parametrize("action", ["install", "recheck", "done", "stop"])
+def test_a_command_question_refuses_answers_meant_for_other_questions(web, action):
+    run_id = start(web)
+    view = wait_for(web, run_id, lambda v: v["question"])
+    assert answer(web, run_id, view, {"action": action}).status_code == 200
+    after = wait_for(web, run_id, lambda v: v["problem"])
+    assert after["problem"]["message"] == "Answer with approve, reject or edit."
+    assert after["question_id"] == view["question_id"] and web[4].texts == []
+
+
+@pytest.fixture
+def no_tools(monkeypatch):
+    monkeypatch.setattr(AllInstalled, "run", lambda self, command: Probe(False, ""))
+
+
+def test_the_tool_question_refuses_approve_and_takes_stop(web, no_tools):
+    run_id = start(web)
+    view = wait_for(web, run_id, lambda v: v["question"])
+    assert view["question"]["kind"] == "install_tool"
+    answer(web, run_id, view, {"action": "approve"})
+    refused = wait_for(web, run_id, lambda v: v["problem"])
+    assert "recheck or stop" in refused["problem"]["message"]
+    assert answer(web, run_id, refused, {"action": "stop"}).status_code == 200
+    done = wait_for(web, run_id, lambda v: v["report"])
+    assert done["error"]["error_type"] == "PrereqMissing" and web[4].texts == []
+
+
+def test_every_kind_of_question_pauses_in_a_labelled_step():
+    from setuppilot.agent.driver import ANSWERS_BY_KIND
+    from setuppilot.web.labels import QUESTION_STEPS
+
+    assert set(QUESTION_STEPS) == set(ANSWERS_BY_KIND) | {"choose_stack"}
+    assert set(QUESTION_STEPS.values()) <= set(STEPS)
+
+
 def test_post_without_the_page_token_is_refused(web):
     assert post(web, "/api/runs", {"repo_url": URL}, token="wrong").status_code == 403
 

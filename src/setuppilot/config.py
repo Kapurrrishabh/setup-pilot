@@ -94,9 +94,15 @@ class RunnerConfig(_Strict):
 
 class AgentConfig(_Strict):
     max_steps: PositiveInt
-    max_readme_chars: PositiveInt
-    plan_max_tokens: PositiveInt
     report_max_tokens: PositiveInt
+    # The kill switch: false turns off the AI analysis and diagnosis together.
+    use_ai_planning: bool
+    max_evidence_chars: PositiveInt
+    analyze_max_tokens: PositiveInt
+    diagnose_max_tokens: PositiveInt
+    max_install_rounds: PositiveInt
+    max_fixes_per_step: PositiveInt
+    max_fixes_per_run: PositiveInt
 
 
 class ChatConfig(_Strict):

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from setuppilot.tools.detect import detect_stacks
+from setuppilot.tools.detect import STACK_FOR_MANAGER, detect_stacks
 from setuppilot.tools.scan import scan_repo
 from tests.fakes import make_repo
 
@@ -193,6 +193,53 @@ def test_submodules_and_lfs_are_noted(tmp_path):
 def test_committed_venv_is_noted_as_untrusted(tmp_path):
     notes = detect(tmp_path, {"requirements.txt": "", ".venv/bin/python": ""}).notes
     assert any(".venv" in n and "not be trusted" in n for n in notes)
+
+
+def test_dotnet_solution_comes_before_its_projects_with_the_sdk_from_global_json(tmp_path):
+    files = {
+        "App.csproj": "<Project/>",
+        "All.sln": "",
+        "global.json": '{"sdk": {"version": "8.0.100"}}',
+    }
+    (dotnet,) = detect(tmp_path, files).candidates
+    assert (dotnet.manager, dotnet.evidence, dotnet.version_hint) == (
+        "dotnet",
+        ("All.sln", "global.json"),
+        "8.0.100",
+    )
+
+
+def test_composer_repo_names_its_lock_file_and_php_version(tmp_path):
+    files = {"composer.json": '{"require": {"php": "^7.4 || ^8.0"}}', "composer.lock": "{}"}
+    (php,) = detect(tmp_path, files).candidates
+    assert (php.stack, php.evidence, php.version_hint) == (
+        "php",
+        ("composer.lock", "composer.json"),
+        "^7.4 || ^8.0",
+    )
+
+
+@pytest.mark.parametrize(
+    ("pubspec", "manager"),
+    [("name: app\ndependencies:\n  flutter:\n    sdk: flutter\n", "flutter"),
+     ("name: lib\ndependencies:\n  path: ^1.8.0\n", "dart")],
+)  # fmt: skip
+def test_flutter_app_is_told_apart_from_a_plain_dart_package(tmp_path, pubspec, manager):
+    assert found(detect(tmp_path, {"pubspec.yaml": pubspec})) == [("dart", manager)]
+
+
+def test_every_detected_manager_has_the_stack_the_ai_options_use(tmp_path):
+    files = {
+        "requirements.txt": "", "package.json": "{}", "yarn.lock": "", "go.mod": "",
+        "Cargo.toml": "", "Gemfile": "", "pom.xml": "", "build.gradle": "", "environment.yml": "",
+        "x.csproj": "", "composer.json": "{}", "pubspec.yaml": "", "Dockerfile": "",
+    }  # fmt: skip
+    candidates = detect(tmp_path, files).candidates
+    assert {c.manager for c in candidates} == {
+        "pip", "conda", "yarn", "go", "cargo", "bundler", "maven", "gradle", "dotnet",
+        "composer", "dart", "dockerfile",
+    }  # fmt: skip
+    assert all(STACK_FOR_MANAGER[c.manager] == c.stack for c in candidates)
 
 
 def test_compose_file_in_a_subfolder_is_noted(tmp_path):

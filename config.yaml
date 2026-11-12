@@ -60,13 +60,25 @@ runner:
   max_output_chars: 20000
 
 agent:
-  # Stops a run that loops (for example, edit after edit). PROVISIONAL.
-  max_steps: 40
-  # Only the start of the README goes to the LLM, to keep each call small.
-  max_readme_chars: 6000
+  # Stops a run that loops (for example, edit after edit). PROVISIONAL: with the limits below,
+  # the longest run takes 56 steps: 8 base, 3 per install round, 2 per command (up to 9) and 7
+  # per AI fix (the diagnosis, 2 fixes, the command again). The other 14 leave room for edits.
+  max_steps: 70
   # PROVISIONAL: gpt-oss reasoning tokens count toward these too.
-  plan_max_tokens: 800
   report_max_tokens: 600
+  # false: no AI analysis or diagnosis; the run uses only the files and SetupPilot's own plans.
+  use_ai_planning: true
+  # PROVISIONAL: the repo facts sent to the AI. 8000 keeps the biggest analyze call near 7,000
+  # tokens by SetupPilot's estimate (measured on 7 repos, 2026-11-12), under the 8,000 a minute.
+  max_evidence_chars: 8000
+  # PROVISIONAL, gpt-oss reasoning included: 12 real analyze answers used 340-1,230 (8 repos,
+  # 2026-11-12) and 3 real diagnoses fit too. Raise them if the run notes say "cut off".
+  analyze_max_tokens: 2000
+  diagnose_max_tokens: 900
+  # PROVISIONAL limits from research-planning.md.
+  max_install_rounds: 3
+  max_fixes_per_step: 2
+  max_fixes_per_run: 3
 
 chat:
   # Runs on your machine; no paid embedding API. Its size (384) is fixed in 002_chat.sql.

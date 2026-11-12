@@ -2,6 +2,8 @@
 
 from typing import Any, Literal
 
+from setuppilot.agent.driver import ANSWERS_BY_KIND
+from setuppilot.agent.graph import AI_ONLY_TEXT
 from setuppilot.db.runs import Step
 
 # "paused" is never saved: the pages show it for a run that a restart stopped mid-step.
@@ -28,14 +30,31 @@ PHASES = [
 STEPS: dict[str, dict[str, Any]] = {
     "clone": {"label": "Download the repo", "phase": 0, "then": "Looking at the files"},
     "scan": {"label": "Look at the files", "phase": 1, "then": "Finding the stack"},
-    "detect": {"label": "Find the stack", "phase": 1, "then": "Checking your tools"},
+    "detect": {"label": "Find the stack", "phase": 1, "then": "Asking the AI what is in it"},
+    "analyze": {"label": "Work out what is in it", "phase": 1, "then": "Checking your tools"},
     "prerequisites": {"label": "Check your tools", "phase": 2, "then": "Picking the stack"},
     "choose_stack": {"label": "Pick the stack", "phase": 2, "then": "Making a plan"},
+    "offer_install": {"label": "Your answer about a tool", "phase": 2, "then": "Working on it"},
+    "install_tool": {"label": "Install a tool", "phase": 2, "then": "Checking your tools again"},
     "plan": {"label": "Make a plan", "phase": 3, "then": "Getting the first command ready"},
     "approve": {"label": "Your answer", "phase": 4, "then": "Working on your answer"},
     "execute": {"label": "Run a command", "phase": 4, "then": "Getting the next step ready"},
+    "diagnose": {"label": "Find out what went wrong", "phase": 4, "then": "Getting a fix ready"},
+    "ask_user": {"label": "Your fix by hand", "phase": 4, "then": "Trying the command again"},
     "verify": {"label": "Check that it works", "phase": 5, "then": "Writing the report"},
     "report": {"label": "Write the report", "phase": 6, "then": "Finishing"},
+}
+# The step each kind of question pauses in, so the page can show where the run is.
+QUESTION_STEPS = {
+    "choose_stack": "choose_stack",
+    "install_tool": "offer_install",
+    "approve_command": "approve",
+    "fix_by_hand": "ask_user",
+}
+VERIFICATION_LABELS = {
+    "setuppilot": "Checked by SetupPilot",
+    "ai_only": AI_ONLY_TEXT,
+    "none": "Not checked",
 }
 FIRST_ACTIVITY = "Downloading the repo"
 
@@ -62,6 +81,10 @@ PAGE_LABELS = {
     "statuses": STATUS_LABELS,
     "phases": PHASES,
     "steps": STEPS,
+    "question_steps": QUESTION_STEPS,
+    # The page shows only the buttons the run takes for its question.
+    "answers": ANSWERS_BY_KIND,
+    "verification": VERIFICATION_LABELS,
     "first_activity": FIRST_ACTIVITY,
     "errors": ERROR_LABELS,
 }
@@ -80,7 +103,8 @@ def step_tone(step: Step) -> Literal["ok", "warn", "bad"]:
         return "bad"
     if step.name == "approve" and step.result_summary.startswith(_ANSWERS_TO_FLAG):
         return "warn"
-    return "ok"
+    # A diagnosis always follows a failure, even when the AI call itself worked.
+    return "warn" if step.name == "diagnose" else "ok"
 
 
 def duration_text(seconds: float) -> str:

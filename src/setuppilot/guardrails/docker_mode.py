@@ -25,6 +25,9 @@ DOCKER_IMAGES: dict[str, str] = {
     "bundler": "ruby:3.3",
     "maven": "maven:3-eclipse-temurin-21",
     "gradle": "gradle:jdk21",
+    "dotnet": "mcr.microsoft.com/dotnet/sdk:10.0",
+    "composer": "composer:2",
+    "dart": "dart:stable",
 }
 _WORKDIR = "/work"
 # The container runs as you, not root, so tool caches live in the repo where it can write.

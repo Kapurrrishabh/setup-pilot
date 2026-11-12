@@ -79,6 +79,19 @@ def test_manager_without_an_image_is_refused_clearly():
         docker_image_for("poetry")
 
 
+@pytest.mark.parametrize(
+    ("manager", "image"),
+    [("dotnet", "dotnet/sdk"), ("composer", "composer"), ("dart", "dart")],
+)
+def test_new_ecosystems_have_an_image_with_their_tool(manager, image):
+    assert image in docker_image_for(manager)
+
+
+def test_flutter_has_no_image_because_its_sdk_is_too_big_to_pull_per_run():
+    with pytest.raises(CommandBlocked, match="does not support flutter"):
+        docker_image_for("flutter")
+
+
 def test_workspace_path_after_equals_is_mapped(tmp_path):
     (tmp_path / "repo").mkdir()
     guard = PathGuard(tmp_path / "repo")

@@ -7,10 +7,18 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command
 
-from setuppilot.agent.graph import AgentDeps, build_graph
+from setuppilot.agent.graph import AgentDeps, Verification, build_graph
 from setuppilot.errors import NotFound, SetupPilotError
 from setuppilot.logging_setup import run_id_var
 from setuppilot.tools.clone import CloneRequest
+
+# The answers each question takes. choose_stack takes {"choice": n} instead.
+ANSWERS_BY_KIND: dict[str, tuple[str, ...]] = {
+    "approve_command": ("approve", "reject", "edit"),
+    # No edit: an install command only ever comes from SetupPilot's own table.
+    "install_tool": ("install", "recheck", "stop"),
+    "fix_by_hand": ("done", "stop"),
+}
 
 
 @dataclass(frozen=True)
@@ -35,11 +43,17 @@ class Stopped:
 class Finished:
     run_id: str
     report: str
-    is_verified: bool
+    # "ai_only": only the AI-proposed checks ran, and all passed.
+    verification: Verification
     # "stack/manager" that was set up, or None when the run stopped before choosing one.
     stack: str | None
     # What went wrong (error_type, message, details), or None for a verified run.
     error: dict[str, str] | None
+
+    @property
+    def is_verified(self) -> bool:
+        """True only when SetupPilot's own checks passed, never on the AI's checks alone."""
+        return self.verification == "setuppilot"
 
 
 class SetupAgent:
@@ -78,16 +92,18 @@ class SetupAgent:
                 "This question was already answered or has changed.",
                 details="Look at the run again to see what it is waiting for now.",
             )
-        options = state.question.get("options")
-        is_known_action = reply.get("action") in {"approve", "reject", "edit"}
-        if options is None and not is_known_action:
+        question = state.question
+        if question["kind"] == "choose_stack":
+            if reply.get("choice") not in range(len(question["options"])):
+                raise QuestionChanged(
+                    "That choice is not one of the options.",
+                    details=f"Pick a number from 1 to {len(question['options'])}.",
+                )
+        elif reply.get("action") not in answers_for(question):
+            *others, last = answers_for(question)
             raise QuestionChanged(
-                "Answer with approve, reject or edit.", details=f"Got {reply.get('action')!r}."
-            )
-        if options is not None and reply.get("choice") not in range(len(options)):
-            raise QuestionChanged(
-                "That choice is not one of the options.",
-                details=f"Pick a number from 1 to {len(options)}.",
+                f"Answer with {', '.join(others)} or {last}.",
+                details=f"Got {reply.get('action')!r}.",
             )
         self._deps.runs.set_status(run_id, "running", None, None)
         return self._advance(run_id, Command(resume=reply))
@@ -125,10 +141,21 @@ class SetupAgent:
         return {"configurable": {"thread_id": run_id}, "recursion_limit": self._recursion_limit}
 
 
+def answers_for(question: dict[str, Any]) -> tuple[str, ...]:
+    """Install is offered only when SetupPilot has a command for this tool here."""
+    answers = ANSWERS_BY_KIND[question["kind"]]
+    if question["kind"] == "install_tool" and question["command"] is None:
+        return tuple(a for a in answers if a != "install")
+    return answers
+
+
 def _finished(run_id: str, values: dict[str, Any]) -> Finished:
     chosen = values.get("chosen")
     stack = f"{chosen['stack']}/{chosen['manager']}" if chosen else None
-    return Finished(run_id, values["report"], values["is_verified"], stack, values.get("error"))
+    # Runs that finished before v2 saved only is_verified, which then meant SetupPilot's checks.
+    old = "setuppilot" if values["is_verified"] else "none"
+    verification = values.get("verification", old)
+    return Finished(run_id, values["report"], verification, stack, values.get("error"))
 
 
 class QuestionChanged(SetupPilotError):

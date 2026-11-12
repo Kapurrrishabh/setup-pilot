@@ -38,6 +38,9 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument("repo_url", help="https://github.com/<owner>/<repo>")
     run.add_argument("dest", help="Folder to clone into (it must exist).")
     run.add_argument("--docker", action="store_true", help="Install inside a Docker container.")
+    run.add_argument(
+        "--subdir", help="Set up only this folder of the repo (a project inside a monorepo)."
+    )
     resume = commands.add_parser("resume", help="Continue a paused run.")
     resume.add_argument("run_id")
     commands.add_parser("runs", help="List recent runs with status, time and tokens.")
@@ -128,9 +131,8 @@ def set_up_repo(settings: Settings, args: argparse.Namespace) -> bool:
     agent = make_agent(settings, stores)
     outcome: Waiting | Stopped | Finished
     if args.command == "run":
-        outcome = agent.start(
-            args.repo_url, resolve_destination(args.dest), args.docker, CloneRequest("public", None)
-        )
+        request = CloneRequest("public", args.subdir)
+        outcome = agent.start(args.repo_url, resolve_destination(args.dest), args.docker, request)
     else:
         if stores.runs.get_run(args.run_id).status == "cancelled":
             print("This run was cancelled. Start a new run instead.", file=sys.stderr)

@@ -12,6 +12,7 @@ from typing import Any
 from flask import Flask, Response, abort, jsonify, render_template, request, session
 from werkzeug.exceptions import HTTPException
 
+from setuppilot.agent.driver import ANSWERS_BY_KIND
 from setuppilot.chat.bot import MAX_QUESTION_CHARS, ChatSession, RepoChatbot
 from setuppilot.chat.embed import Embedder
 from setuppilot.chat.repos import index_github_repo
@@ -232,17 +233,21 @@ def _text(body: dict[str, Any], name: str, max_chars: int, label: str) -> str:
 
 
 def _reply(body: dict[str, Any]) -> dict[str, Any]:
-    """Only the three answers the graph understands get through, with checked types."""
+    """Only answers the graph understands get through, with checked types. Whether one fits
+    the question the run is waiting on is checked by SetupAgent.answer."""
     if "choice" in body:
         if not isinstance(body["choice"], int) or isinstance(body["choice"], bool):
             raise BadInput("Pick one of the options.", details="choice must be a number.")
         return {"choice": body["choice"]}
     action = body.get("action")
-    if action in ("approve", "reject"):
-        return {"action": action}
     if action == "edit":
         return {
             "action": "edit",
             "command": _text(body, "command", MAX_COMMAND_CHARS, "the command"),
         }
-    raise BadInput("Choose approve, reject or edit.", details=f"Got {action!r}.")
+    if action in _ACTIONS:
+        return {"action": action}
+    raise BadInput("That answer is not one of the choices.", details=f"Got {action!r}.")
+
+
+_ACTIONS = frozenset(a for answers in ANSWERS_BY_KIND.values() for a in answers)

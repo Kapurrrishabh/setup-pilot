@@ -1,6 +1,7 @@
-# Setup evaluation: 15 small public repos. Checked against the repos on 2026-11-02.
-# Stack, manager and install commands are what SetupPilot's detector and planner give for a
-# fresh clone. expected_result is a prediction for a normal laptop that has the stack's tools.
+# Setup evaluation: 18 small public repos. Checked against the repos on 2026-11-02; the last 3
+# on 2026-11-12. Stack, manager and install commands are what SetupPilot's detector and planner
+# give for a fresh clone (with agent.use_ai_planning off; the AI may word them differently).
+# expected_result is a prediction for a normal laptop that has the stack's tools.
 # expected_install is one list, or posix and windows lists where the commands differ.
 repos:
   - url: https://github.com/pypa/sampleproject
@@ -109,3 +110,24 @@ repos:
     expected_install: ["docker compose -f docker-compose.yml up -d --build --wait"]
     expected_result: verified
     note: "Builds a Java API (5 copies) and a Go web app, and runs Postgres 10. No health checks, so all 7 containers should show as running right away. Needs Docker running; the first build pulls about 1 GB of images (rough guess). Publishes port 8080 on all network interfaces."
+
+  - url: https://github.com/fastapi/full-stack-fastapi-template
+    expected_stack: node
+    expected_manager: bun
+    expected_install: ["bun install"]
+    expected_result: verified
+    note: "Monorepo: a uv workspace (backend/), a bun workspace (frontend/ and packages/*) and Compose files, all at the root, so SetupPilot asks which to set up. bun install at the root installs every bun workspace. uv sync at the root would install only the root's dev tools, not backend/; with the AI on, backend/ and frontend/ are also offered as sub-projects (the analysis named both on 2026-11-12). Needs bun."
+
+  - url: https://github.com/ardalis/GuardClauses
+    expected_stack: dotnet
+    expected_manager: dotnet
+    expected_install: ["dotnet restore GuardClauses.sln"]
+    expected_result: verified
+    note: ".NET: GuardClauses.sln with a library (net8.0, netstandard2.1 and 2.0) and an xunit test project, all from NuGet. The check builds the solution without restoring again. Needs the .NET SDK 8 or newer; on Windows SetupPilot offers winget's Microsoft.DotNet.SDK.10. Not tried on a machine with .NET yet."
+
+  - url: https://github.com/openai/gpt-2
+    expected_stack: python
+    expected_manager: pip
+    expected_install: ["uv venv .venv", "uv pip install --python .venv -r requirements.txt"]
+    expected_result: verified
+    note: "An install that fails: requirements.txt pins regex==2017.4.5, which has no wheel for new Pythons and whose C code does not build on Python 3.12 or 3.13. With agent.use_ai_planning off the run ends with InstallFailed. With the AI on (real Groq, 2026-11-12, macOS) it was verified after two AI fixes, uv venv --clear --python 3.12 .venv and then 3.11, so the approved installs then include the fixes and Install right is no."
