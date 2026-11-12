@@ -17,6 +17,9 @@ class PathGuard:
     def check(self, path: str | Path) -> Path:
         """Return the real path, following symlinks, or raise if it leaves the workspace."""
         text, raw = str(path), Path(path)
+        # Refused here on every system: Windows does not reject a NUL byte the way POSIX does.
+        if "\x00" in text:
+            raise self._blocked(path, "Paths cannot contain a NUL byte.")
         # Windows rules split on both / and \, so ..\.. is refused on every system too.
         windows = PureWindowsPath(text)
         # Windows reads any two leading slashes, either way round, as a network path.

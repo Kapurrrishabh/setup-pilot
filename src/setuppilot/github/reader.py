@@ -11,7 +11,7 @@ from setuppilot.config import GitHubConfig
 from setuppilot.errors import PathBlocked, SetupPilotError
 from setuppilot.github.api import GitHubClient, GitHubError, TreeEntry, check_repo_path
 from setuppilot.tools.github_url import RepoRef, parse_github_url
-from setuppilot.tools.scan import SKIP_DIRS
+from setuppilot.tools.scan import SKIP_DIRS, decode_text
 
 _COMMIT_SHA = re.compile(r"[0-9a-f]{40}")
 
@@ -106,7 +106,7 @@ def _read_archive(
                 if not SKIP_DIRS.isdisjoint(path.split("/")[:-1]):
                     continue
                 data = archive.extractfile(member)
-                if data is not None and (text := _text(data.read())) is not None:
+                if data is not None and (text := decode_text(data.read())) is not None:
                     files[path] = text
             commit_sha = archive.pax_headers.get("comment", "")
     except (tarfile.TarError, EOFError) as error:
@@ -120,8 +120,3 @@ def _read_archive(
             details="Try again in a few minutes. If it keeps happening, please report it.",
         )
     return commit_sha, tuple(entries), files
-
-
-def _text(data: bytes) -> str | None:
-    """None for a binary file, as the chatbot's own file reader does."""
-    return None if b"\x00" in data else data.decode("utf-8", errors="replace")

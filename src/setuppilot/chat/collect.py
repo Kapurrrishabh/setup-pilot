@@ -12,7 +12,7 @@ from typing import Literal
 
 from setuppilot.errors import CloneFailed
 from setuppilot.tools.compose import COMPOSE_NAMES
-from setuppilot.tools.scan import SKIP_DIRS, RepoScan
+from setuppilot.tools.scan import SKIP_DIRS, RepoScan, decode_text
 
 DocumentKind = Literal["doc", "manifest", "ci", "code", "test", "tree"]
 TREE_PATH = "(file tree)"
@@ -134,10 +134,12 @@ def file_kind(path: str) -> DocumentKind | None:
 
 def _document(path: str, kind: DocumentKind, data: bytes) -> Document | None:
     """The file as text, or None when it is binary, empty or generated."""
-    if b"\x00" in data:
-        return None
-    text = data.decode("utf-8", errors="replace")
-    if not text.strip() or len(text) / (text.count("\n") + 1) > _GENERATED_LINE_CHARS:
+    text = decode_text(data)
+    if (
+        text is None
+        or not text.strip()
+        or len(text) / (text.count("\n") + 1) > _GENERATED_LINE_CHARS
+    ):
         return None
     return Document(path, text, kind)
 

@@ -73,3 +73,11 @@ def scan_repo(root: Path) -> RepoScan:
 def _is_link(path: Path) -> bool:
     """A Windows junction points elsewhere like a symlink, but is_symlink() says no to it."""
     return path.is_symlink() or path.is_junction()
+
+
+def decode_text(data: bytes) -> str | None:
+    """A file's text with Unix line endings, or None when it is binary (has a NUL byte)."""
+    if b"\x00" in data:
+        return None
+    # Git on Windows can check files out with CRLF; the same file must read the same everywhere.
+    return data.decode("utf-8", errors="replace").replace("\r\n", "\n")

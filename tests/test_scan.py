@@ -73,3 +73,10 @@ def test_missing_folder_cannot_be_scanned(tmp_path):
 def test_committed_install_folders_are_reported(tmp_path):
     repo = make_repo(tmp_path / "r", {"node_modules/x.js": "", "app.js": ""})
     assert scan_repo(repo).skipped_dirs == ("node_modules",)
+
+
+def test_text_reads_the_same_with_windows_line_endings_and_binary_is_left_out():
+    from setuppilot.tools.scan import decode_text
+
+    assert decode_text(b"one\r\ntwo\n") == "one\ntwo\n"
+    assert decode_text(b"PNG\x00\x01") is None

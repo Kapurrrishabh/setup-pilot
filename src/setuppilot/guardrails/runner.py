@@ -176,10 +176,12 @@ def run_command(
         tree = _ContainerTree(tree, process, program, command.container_name, env)
     tail = _TailBuffer(config.max_output_chars)
     reader = threading.Thread(target=tail.read_all, args=(process.stdout,), daemon=True)
+    is_done = False
     try:
         on_start(tree)
         reader.start()
         exit_code = _wait(process, config.timeout_seconds)
+        is_done = True
     except subprocess.TimeoutExpired as error:
         tree.stop()
         reader.join(timeout=_READER_JOIN_SECONDS)
@@ -189,7 +191,9 @@ def run_command(
             f"needs longer. Last output:\n{tail.text()}",
         ) from error
     finally:
-        # Also on Ctrl+C: children left running would go on with no time limit.
+        # Also on Ctrl+C: stop it the way Cancel does (a container too), then clean up.
+        if not is_done:
+            tree.stop()
         tree.close()
     reader.join(timeout=_READER_JOIN_SECONDS)
     if reader.is_alive():
