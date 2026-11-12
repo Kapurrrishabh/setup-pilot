@@ -11,7 +11,7 @@ from setuppilot.errors import LLMUnavailable
 from setuppilot.llm.groq import build_llm_client
 from setuppilot.tools.prereqs import SystemToolProbe
 from setuppilot.web.app import WebServices, create_app
-from setuppilot.web.preflight import run_preflight
+from setuppilot.web.preflight import run_preflight, windows_facts
 from setuppilot.web.runs import CommandTracker, RunManager
 
 
@@ -35,7 +35,7 @@ def build_services(settings: Settings) -> WebServices:
             partial(RepoChatbot, settings.chat, stores.chat_index, embedder, llm) if llm else None
         ),
         llm_problem=llm_problem,
-        preflight=lambda folder: run_preflight(stores, SystemToolProbe(), folder),
+        preflight=lambda folder: run_preflight(stores, SystemToolProbe(), folder, windows_facts()),
     )
 
 

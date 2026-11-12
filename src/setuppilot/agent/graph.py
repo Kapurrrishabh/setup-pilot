@@ -26,8 +26,8 @@ from setuppilot.errors import (
     TooManySteps,
     VerifyFailed,
 )
-from setuppilot.guardrails.commands import INSTALL_SCRIPT_WARNING, validate_command
-from setuppilot.guardrails.docker_mode import docker_image_for, in_docker
+from setuppilot.guardrails.commands import INSTALL_SCRIPT_WARNING, ExecTarget, validate_command
+from setuppilot.guardrails.docker_mode import RUNS_ON_HOST, docker_image_for, exec_target, in_docker
 from setuppilot.guardrails.paths import PathGuard
 from setuppilot.guardrails.runner import CommandOutput
 from setuppilot.llm.client import LLMClient
@@ -85,6 +85,8 @@ class AgentDeps:
     clone: Callable[[RepoRef, Path], Path]
     probe: ToolProbe
     run: Callable[[Any], CommandOutput]
+    # The system SetupPilot runs on. Docker mode may still run commands for "posix".
+    host: ExecTarget
 
 
 @dataclass(frozen=True)
@@ -111,7 +113,7 @@ def build_graph(deps: AgentDeps) -> StateGraph:
         "prerequisites": lambda s: _prerequisites(deps, s),
         "choose_stack": lambda s: _choose_stack(deps, s),
         "plan": lambda s: _plan(deps, s),
-        "approve": _approve,
+        "approve": lambda s: _approve(deps, s),
         "execute": lambda s: _execute(deps, s),
         "verify": lambda s: _verify(deps, s),
     }
@@ -234,7 +236,9 @@ def _detect(state: RunState) -> tuple[dict, StepNote]:
 
 def _prerequisites(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
     prereqs = {
-        _key(c): [asdict(check) for check in check_prerequisites(_candidate(c), deps.probe)]
+        _key(c): [
+            asdict(check) for check in check_prerequisites(_candidate(c), deps.probe, deps.host)
+        ]
         for c in state["candidates"]
     }
     missing = sorted(
@@ -281,7 +285,7 @@ def _choose_stack(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
     if state.get("use_docker") and not _runs_on_host(state | {"chosen": chosen}):
         docker_image_for(chosen["manager"])
         docker = StackCandidate("docker", "dockerfile", (), None)
-        checks = [asdict(c) for c in check_prerequisites(docker, deps.probe)]
+        checks = [asdict(c) for c in check_prerequisites(docker, deps.probe, deps.host)]
     else:
         checks = state["prereqs"][_key(chosen)]
     missing = [c for c in checks if not c["is_installed"]]
@@ -304,20 +308,21 @@ def _plan(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
     repo = Path(state["repo_dir"])
     scan = scan_repo(repo)
     top = frozenset(f for f in scan.files if "/" not in f)
-    installs = install_plan(candidate, top, is_installable_project(repo))
+    target = _target(deps, state)
+    installs = install_plan(candidate, top, is_installable_project(repo), target)
     plan = [_item(c.text, c.reason, "install") for c in installs]
     if candidate.manager == "compose":
         (compose,) = find_compose_files(repo, (candidate.evidence[0],))
         if compose.warnings:
             plan[0]["reason"] += " Careful: " + " ".join(compose.warnings)
-    checks = [_item(c.text, c.reason, "check") for c in code_checks(candidate, scan.files)]
+    checks = [_item(c.text, c.reason, "check") for c in code_checks(candidate, scan.files, target)]
     planned = [p["text"] for p in plan + checks]
     tips, manual_steps, note, skip_reason = _readme_tips(deps, state, candidate, planned, top)
     guard = PathGuard(repo)
     for tip in tips:
         item = _item(tip["command"], f"From the README: {tip['reason']}", "readme")
         try:
-            validate_command(item["text"], guard)
+            validate_command(item["text"], guard, target)
         except CommandBlocked as error:
             item |= {"status": "blocked", "block_reason": error.details}
         if item["text"] not in planned:
@@ -372,7 +377,7 @@ def _readme_tips(
     return tips, manual, note, None
 
 
-def _approve(state: RunState) -> tuple[dict, StepNote]:
+def _approve(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
     index = _pending_index(state)
     if index is None:
         raise RuntimeError(f"Run {state['run_id']} reached approve with no command waiting.")
@@ -397,7 +402,7 @@ def _approve(state: RunState) -> tuple[dict, StepNote]:
     if action == "edit":
         new_text = str(answer.get("command", ""))
         try:
-            validate_command(new_text, PathGuard(Path(state["repo_dir"])))
+            validate_command(new_text, PathGuard(Path(state["repo_dir"])), _target(deps, state))
         except CommandBlocked as error:
             return {"decision": "edit", "edit_error": error.details}, StepNote("Edit was blocked.")
         item |= {"text": new_text, "kind": "install"}
@@ -414,7 +419,9 @@ def _execute(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
     plan = [dict(p) for p in state["plan"]]
     item = plan[index]
     # Checked again right before running: nothing can slip in between approval and run.
-    command = validate_command(item["text"], PathGuard(Path(state["repo_dir"])))
+    command = validate_command(
+        item["text"], PathGuard(Path(state["repo_dir"])), _target(deps, state)
+    )
     if state.get("use_docker") and not _runs_on_host(state):
         command = in_docker(command, docker_image_for(state["chosen"]["manager"]))
     arguments = {"command": redact(item["text"])}
@@ -427,6 +434,7 @@ def _execute(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
     item |= {
         "status": "done",
         "exit_code": output.exit_code,
+        "is_stopped": output.is_stopped,
         "output_tail": output.output_tail[-_STATE_OUTPUT_CHARS:],
     }
     update = {"plan": plan, "next_index": index + 1}
@@ -437,9 +445,8 @@ def _execute(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
                 details=output.output_tail[-_STATE_OUTPUT_CHARS:],
             )
         )
-    # A negative exit code means a signal stopped it, which here is almost always Cancel.
     ran_text = f"Ran {item['text']}: exit {output.exit_code}."
-    if output.exit_code < 0:
+    if output.is_stopped:
         ran_text = f"{item['text']} was stopped before it finished."
     note = StepNote(
         ran_text,
@@ -454,11 +461,12 @@ def _verify(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
     candidate = _candidate(state["chosen"])
     repo = Path(state["repo_dir"])
     guard = PathGuard(repo)
+    target = _target(deps, state)
 
     ran: list[str] = []
 
     def run_quietly(text: str) -> CommandOutput:
-        command = validate_command(text, guard)
+        command = validate_command(text, guard, target)
         if state.get("use_docker") and not _runs_on_host(state):
             command = in_docker(command, docker_image_for(candidate.manager))
         ran.append(text)
@@ -469,7 +477,9 @@ def _verify(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
         p["text"] for p in state["plan"] if p["status"] == "rejected" and p["kind"] != "readme"
     ]
     # After a skip nothing else runs, not even read-only checks: the user said no.
-    checks = [] if skipped else [asdict(c) for c in quiet_checks(candidate, repo, run_quietly)]
+    checks = (
+        [] if skipped else [asdict(c) for c in quiet_checks(candidate, repo, run_quietly, target)]
+    )
     for item in state["plan"]:
         if item["kind"] == "check" and item["status"] == "done":
             checks.append(
@@ -541,7 +551,13 @@ def _report(deps: AgentDeps, state: RunState) -> dict:
         "stack": _key(state["chosen"]) if state.get("chosen") else None,
         "in_docker": bool(state.get("use_docker")),
         "commands": [
-            {"command": redact(p["text"]), "status": p["status"], "exit_code": p.get("exit_code")}
+            {
+                "command": redact(p["text"]),
+                "status": p["status"],
+                "exit_code": p.get("exit_code"),
+                # Only a command that ran has this.
+                "is_stopped": bool(p.get("is_stopped")),
+            }
             for p in state.get("plan", [])
         ],
         "checks": [{"name": c["name"], "passed": c["is_passed"]} for c in state.get("checks", [])],
@@ -602,9 +618,9 @@ def _command_outcome(command: dict) -> str:
     code = command["exit_code"]
     if code is None:
         return words
-    return (
-        f"{words}, but was stopped before it finished" if code < 0 else f"{words}, exit code {code}"
-    )
+    if command["is_stopped"]:
+        return f"{words}, but was stopped before it finished"
+    return f"{words}, exit code {code}"
 
 
 def _count(number: int, word: str) -> str:
@@ -649,7 +665,11 @@ def _after_approve(state: RunState) -> str:
 
 def _runs_on_host(state: RunState) -> bool:
     """Compose stacks already run in containers, so Docker mode leaves their commands alone."""
-    return state["chosen"]["manager"] == "compose"
+    return state["chosen"]["manager"] in RUNS_ON_HOST
+
+
+def _target(deps: AgentDeps, state: RunState) -> ExecTarget:
+    return exec_target(deps.host, bool(state.get("use_docker")), state["chosen"]["manager"])
 
 
 def _item(text: str, reason: str, kind: str) -> dict:

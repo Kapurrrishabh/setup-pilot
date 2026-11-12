@@ -1,5 +1,7 @@
 """Fakes shared by tests: a clock that moves only when slept, and a scripted LLM."""
 
+import sys
+
 from setuppilot.config import BudgetConfig, GroqConfig, GroqModel, ModelLimits
 from setuppilot.db.metrics import InMemoryMetricsStore
 from setuppilot.llm.cache import InMemoryCache
@@ -83,15 +85,21 @@ def make_repo(root, files: dict[str, str]):
     for relative, text in files.items():
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
+        path.write_text(text, encoding="utf-8")
     return root
 
 
-def fake_executable(folder, name: str, script: str):
-    """A tiny shell script on disk, used as a stand-in for a real tool on PATH."""
+def fake_executable(folder, name: str, code: str):
+    """A stand-in for a real tool on PATH: a little Python program, started the way the system
+    starts programs (a #! line on macOS and Linux, a .cmd file on Windows)."""
     folder.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        (folder / f"{name}.py").write_text(code, encoding="utf-8")
+        path = folder / f"{name}.cmd"
+        path.write_text(f'@"{sys.executable}" "%~dp0{name}.py" %*\n', encoding="utf-8")
+        return path
     path = folder / name
-    path.write_text("#!/bin/sh\n" + script + "\n")
+    path.write_text(f"#!{sys.executable}\n{code}\n", encoding="utf-8")
     path.chmod(0o755)
     return path
 

@@ -87,7 +87,7 @@ def use_fake_agent(monkeypatch, source):
 
     def make_fake_agent(settings, stores):
         deps = AgentDeps(
-            settings, stores.runs, None, fake_clone(source), AllInstalled(), FakeRunner()
+            settings, stores.runs, None, fake_clone(source), AllInstalled(), FakeRunner(), "posix"
         )
         return SetupAgent(deps, stores.checkpointer)
 

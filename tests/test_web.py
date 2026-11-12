@@ -1,6 +1,10 @@
 """The web app through its HTTP surface, with fake repos, a fake runner and a fake LLM."""
 
+import contextlib
 import json
+import os
+import subprocess
+import sys
 import threading
 import time
 from typing import get_args
@@ -20,9 +24,11 @@ from setuppilot.db.runs import InMemoryRunStore, RunStatus
 from setuppilot.db.stores import Stores
 from setuppilot.llm.cache import InMemoryCache
 from setuppilot.llm.usage import InMemoryUsageStore
+from setuppilot.logging_setup import run_id_var
+from setuppilot.tools.prereqs import Probe
 from setuppilot.web.app import WebServices, create_app
 from setuppilot.web.labels import ERROR_LABELS, STATUS_LABELS, STEPS, duration_text
-from setuppilot.web.preflight import run_preflight
+from setuppilot.web.preflight import WindowsFacts, run_preflight
 from setuppilot.web.runs import CommandTracker, RunManager
 from tests.fakes import FakeEmbedder, FakeTransport, make_client, make_repo, reply
 from tests.test_agent import AllInstalled, FakeRunner, NothingInstalled, fake_clone
@@ -42,7 +48,8 @@ def web(tmp_path):
         InMemoryChunkIndex(), InMemorySaver(), None,
     )  # fmt: skip
     runner = FakeRunner()
-    deps = AgentDeps(SETTINGS, stores.runs, None, fake_clone(source), AllInstalled(), runner)
+    clone = fake_clone(source)
+    deps = AgentDeps(SETTINGS, stores.runs, None, clone, AllInstalled(), runner, "posix")
     manager = RunManager(SetupAgent(deps, stores.checkpointer), stores.runs, CommandTracker())
     index_repo("someone/demo", URL, source, SETTINGS.chat, 2000, FakeEmbedder(), stores.chat_index)
     answer = json.dumps({"answer": "MIT.", "found": True, "sources": ["LICENSE"]})
@@ -227,7 +234,7 @@ def test_run_page_gives_its_script_the_same_labels_as_the_templates(web):
 
 
 def test_labels_cover_every_status_step_and_error():
-    graph = build_graph(AgentDeps(SETTINGS, InMemoryRunStore(), None, None, None, None))
+    graph = build_graph(AgentDeps(SETTINGS, InMemoryRunStore(), None, None, None, None, "posix"))
     error_names = {
         cls.__name__
         for cls in errors.SetupPilotError.__subclasses__()
@@ -370,9 +377,89 @@ def test_preflight_says_which_failed_checks_stop_a_run(web, monkeypatch):
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     monkeypatch.setattr(preflight, "_can_reach", lambda url: True)
     monkeypatch.setattr(web[3].runs, "list_runs", database_down)
-    checks = run_preflight(web[3], NothingInstalled(), "/no/such/folder")
+    checks = run_preflight(web[3], NothingInstalled(), "/no/such/folder", None)
     failing = {c["id"]: c["is_needed"] for c in checks if not c["is_ok"]}
     assert failing == {"groq": False, "docker": False, "folder": True, "database": True}
+
+
+class DockerAnswers:
+    def __init__(self, os_type):
+        self._os_type = os_type
+
+    def run(self, command):
+        return Probe(True, self._os_type)
+
+
+def preflight_by_id(web, monkeypatch, folder, windows, probe=None):
+    from setuppilot.web import preflight
+
+    monkeypatch.setattr(preflight, "_can_reach", lambda url: True)
+    checks = run_preflight(web[3], probe or NothingInstalled(), folder, windows)
+    return {c["id"]: c for c in checks}
+
+
+def test_preflight_on_windows_warns_about_a_folder_inside_onedrive(web, tmp_path, monkeypatch):
+    synced = tmp_path / "OneDrive"
+    (synced / "work").mkdir(parents=True)
+    facts = WindowsFacts((synced,), is_long_paths_enabled=True)
+    onedrive = preflight_by_id(web, monkeypatch, str(synced / "work"), facts)["onedrive"]
+    assert (onedrive["is_ok"], onedrive["is_needed"]) == (False, False)
+
+
+def test_preflight_on_windows_says_when_long_paths_are_off(web, monkeypatch):
+    facts = WindowsFacts((), is_long_paths_enabled=False)
+    assert not preflight_by_id(web, monkeypatch, "", facts)["long_paths"]["is_ok"]
+
+
+def test_docker_running_windows_containers_is_not_ready_for_docker_mode(web, monkeypatch):
+    docker = preflight_by_id(web, monkeypatch, "", None, DockerAnswers("windows"))["docker"]
+    assert not docker["is_ok"] and "Linux containers" in docker["fix"]
+
+
+@contextlib.contextmanager
+def unwritable(folder):
+    """On Windows os.access says every folder can be written, so this needs a real deny rule."""
+    if sys.platform == "win32":
+        user = os.environ["USERNAME"]
+        subprocess.run(["icacls", str(folder), "/deny", f"{user}:(W)"], check=True)
+        try:
+            yield
+        finally:
+            subprocess.run(["icacls", str(folder), "/remove:d", user], check=True)
+        return
+    folder.chmod(0o500)
+    try:
+        yield
+    finally:
+        folder.chmod(0o700)
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32" and os.geteuid() == 0, reason="root can write to any folder"
+)
+def test_preflight_finds_a_folder_it_cannot_write_to(web, tmp_path, monkeypatch):
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    with unwritable(locked):
+        assert not preflight_by_id(web, monkeypatch, str(locked), None)["folder"]["is_ok"]
+
+
+def test_cancel_stops_the_command_the_run_is_running(tmp_path):
+    stopped = threading.Event()
+
+    class FakeTree:
+        was_stopped = False
+
+        def stop(self):
+            stopped.set()
+
+    runs, tracker = InMemoryRunStore(), CommandTracker()
+    run = runs.create_run(URL, str(tmp_path))
+    token = run_id_var.set(run.id)
+    tracker.track(FakeTree())
+    run_id_var.reset(token)
+    RunManager(None, runs, tracker).cancel(run.id)
+    assert stopped.wait(5)
 
 
 # "::1" is loopback, but the app binds and prints 127.0.0.1, so it would print a dead address.

@@ -11,6 +11,8 @@ from pathlib import Path
 
 from setuppilot.config import RepoConfig
 from setuppilot.errors import CloneFailed, PrereqMissing
+from setuppilot.guardrails.commands import ExecTarget
+from setuppilot.guardrails.runner import HOST_TARGET
 from setuppilot.tools.github_url import RepoRef
 
 log = logging.getLogger(__name__)
@@ -28,7 +30,19 @@ _GIT_SAFETY = (
     "credential.helper=",
     "-c",
     "core.askPass=",
+    # Windows: paths past 260 characters. Everywhere: scripts keep LF line endings, so a
+    # Windows clone still runs in Docker's Linux (.gitattributes eol=crlf is still followed).
+    "-c",
+    "core.longpaths=true",
+    "-c",
+    "core.autocrlf=false",
 )
+
+
+def git_options(host: ExecTarget) -> tuple[str, ...]:
+    """Windows checks out links as plain files on every machine, not only where the user
+    turned links on (making them needs admin rights there)."""
+    return _GIT_SAFETY + (("-c", "core.symlinks=false") if host == "windows" else ())
 
 
 def check_github_repo(ref: RepoRef) -> None:
@@ -99,15 +113,17 @@ def _git(args: list[str], config: RepoConfig, label: str, advice: str) -> str:
         raise PrereqMissing(
             "git is not installed.", details="Install git from https://git-scm.com/downloads."
         )
-    # No prompts (private repos fail fast) and no Git LFS downloads (they can be huge).
+    # No prompts or sign-in windows (private repos fail fast) and no Git LFS downloads (they
+    # can be huge).
     hidden = {"GIT_ASKPASS", "SSH_ASKPASS"}
     env = {k: v for k, v in os.environ.items() if k not in hidden}
-    env |= {"GIT_TERMINAL_PROMPT": "0", "GIT_LFS_SKIP_SMUDGE": "1"}
+    env |= {"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never", "GIT_LFS_SKIP_SMUDGE": "1"}
     try:
         done = subprocess.run(  # noqa: S603 - fixed git command, no shell
-            [git, *_GIT_SAFETY, *args],
+            [git, *git_options(HOST_TARGET), *args],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=config.clone_timeout_seconds,
             env=env,
             check=False,

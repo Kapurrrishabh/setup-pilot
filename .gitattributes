@@ -1,2 +1,6 @@
 # test.sh must keep Unix line endings, or bash in WSL cannot run a Windows checkout of it.
 *.sh text eol=lf
+# cmd.exe and PowerShell scripts need Windows line endings, whatever system checks them out.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

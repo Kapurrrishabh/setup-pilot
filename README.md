@@ -36,8 +36,9 @@ repo is also risky, because install scripts can run any code.
 
 ## Quick start
 
-You need macOS or Linux, git, and [uv](https://docs.astral.sh/uv/getting-started/installation/)
-(it brings Python 3.12+). Everything else is free.
+You need Windows 10 or 11 (x64), macOS or Linux, git, and
+[uv](https://docs.astral.sh/uv/getting-started/installation/) (it brings Python 3.12+).
+Everything else is free.
 
 ```bash
 git clone https://github.com/Kapurrrishabh/setup-pilot.git setuppilot && cd setuppilot
@@ -215,21 +216,24 @@ must end in `_test`, because the tests empty every table. CI starts its own Post
   can also pick the program that links. Run it yourself if you need it.
 - **Budgets** are checked before each call, but two calls at the same moment (a setup run and a
   chat question) can go a little over the daily token budget.
-- Windows is not supported (paths like `.venv/bin/python`).
+- **Windows on ARM** is not supported: PyTorch and psycopg have no Windows ARM64 wheels in
+  `uv.lock`. Use Windows x64.
 
 ## Testing still to do
 
 Everything below was built and tested on one MacBook (Apple silicon) with no Groq key and a local
 Postgres instead of Supabase. CI on GitHub runs lint, types, all unit tests on Python 3.12 and
-3.13 (with a real Postgres and pgvector), a dependency audit, the package build, and the Chrome
-click-through. These checks still need a key, a Supabase project or another machine:
+3.13 (with a real Postgres and pgvector), the unit tests on Windows (without the database), a
+dependency audit, the package build, and the Chrome click-through. These checks still need a key,
+a Supabase project or another machine:
 
 | What | Why it is not done yet | How to run it |
 |---|---|---|
 | Real Groq calls: `ask`, README tips and the AI report in a run, tokens per run (the setup table's Tokens column; `setuppilot show <run id>` lists each call) | no Groq key on the build laptop | `./test.sh groq setup` |
 | Chatbot full answers and "I don't know" (target 80%+ grounded) | no Groq key | `./test.sh chat` |
 | Real Supabase: tables, row level security, pause and resume across a restart, cached replay | no Supabase project yet | `./test.sh supabase chat` |
-| The 15-repo setup evaluation on Linux or Windows (WSL) | only macOS tried | `./test.sh setup` |
+| The 15-repo setup evaluation on Linux or Windows | only macOS tried | `./test.sh setup`; on Windows `uv run setuppilot eval-setup` |
+| Windows: Cancel and the time limit stopping every process, `.cmd` tools like npm, Docker Desktop | written from the Windows docs; only the Windows CI job tests it | run a setup and press Cancel |
 | Docker mode and Compose on Docker Desktop, and whether a container can reach the web app | only Colima tried | `./test.sh docker` |
 | The web app in Firefox and Safari | only Chrome tried | by hand (steps below) |
 | LangSmith tracing (optional) | no LangSmith key | set `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY` in `.env`, run a setup, look for the trace |
@@ -249,8 +253,8 @@ because Docker cannot read those on macOS); delete it when done. The `setup` par
 stacks' tools (uv, node and npm, pnpm, poetry, go, cargo, ruby and bundler, java and maven,
 docker); a missing tool shows as PrereqMissing in the table. The `browser` part needs Google
 Chrome (or run `uv run --group e2e playwright install chromium` and set
-`SETUPPILOT_E2E_BROWSER=chromium`); without it, that part is skipped. On Windows, run it inside
-WSL.
+`SETUPPILOT_E2E_BROWSER=chromium`); without it, that part is skipped. `test.sh` needs bash: WSL
+can run it on Windows, but that tests Linux, not Windows.
 
 By hand, in Firefox and Safari: open http://127.0.0.1:5005, start a setup of
 `https://github.com/pypa/sampleproject`, press Edit and try `rm -rf /` (it must be refused),

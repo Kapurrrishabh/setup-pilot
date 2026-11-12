@@ -4,6 +4,7 @@ import re
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from setuppilot.errors import CommandBlocked, PathBlocked
 from setuppilot.guardrails.paths import PathGuard
@@ -14,6 +15,8 @@ INSTALL_SCRIPT_WARNING = (
     "trust this repo, or use Docker mode."
 )
 
+# Where a command runs: on Windows itself, or on macOS, Linux and inside Docker's Linux images.
+ExecTarget = Literal["posix", "windows"]
 Rule = tuple[tuple[str, ...], ...]
 _MAVEN: Rule = (("dependency:resolve",), ("dependency:go-offline",), ("compile",))
 _GRADLE: Rule = (("dependencies",), ("assemble",))
@@ -43,14 +46,26 @@ ALLOWED: dict[str, Rule] = {
     ),
     "git": (("submodule", "update", "--init"),),
 }
+VENV_PYTHON: dict[ExecTarget, str] = {
+    "posix": ".venv/bin/python",
+    "windows": ".venv/Scripts/python.exe",
+}
+# A repo's own build script for Java; it replaces an installed Maven or Gradle.
+JAVA_WRAPPERS: dict[ExecTarget, dict[str, str]] = {
+    "posix": {"maven": "mvnw", "gradle": "gradlew"},
+    "windows": {"maven": "mvnw.cmd", "gradle": "gradlew.bat"},
+}
 # Programs inside the workspace that may run, with their own rules.
-WORKSPACE_PROGRAMS: dict[str, Rule] = {
-    "mvnw": _MAVEN,
-    "gradlew": _GRADLE,
-    ".venv/bin/python": (("-c",),),
+WORKSPACE_PROGRAMS: dict[ExecTarget, dict[str, Rule]] = {
+    target: {
+        wrappers["maven"]: _MAVEN,
+        wrappers["gradle"]: _GRADLE,
+        VENV_PYTHON[target]: (("-c",),),
+    }
+    for target, wrappers in JAVA_WRAPPERS.items()
 }
 # Build tools run every goal they are given, so every word must be allowed, not only the first.
-_EVERY_WORD_CHECKED = {"mvn", "mvnw", "gradle", "gradlew"}
+_EVERY_WORD_CHECKED = {"mvn", "gradle"} | {w for ws in JAVA_WRAPPERS.values() for w in ws.values()}
 _NEVER = {"sudo", "su", "doas", "rm", "curl", "wget", "sh", "bash", "zsh", "eval", "chmod", "dd"}
 # Flags that install outside the project, or run another program of the caller's choice.
 _BLOCKED_FLAGS = {"--system", "--break-system-packages", "--user", "-g", "--global", "--location"}
@@ -65,6 +80,8 @@ _SHELL_PARTS = (";", "|", "&", "`", "$(", "\n", "\r", "\x00")
 # `python -c` may only import a module: that is the verify step's import test.
 _IMPORT_ONLY = re.compile(r"import [A-Za-z_]\w*(\.[A-Za-z_]\w*)*", re.ASCII)
 MAX_COMMAND_CHARS = 1000
+# A Windows drive, as in C:\Users or the drive-relative D:req.txt.
+WINDOWS_DRIVE = re.compile(r"[A-Za-z]:")
 
 
 @dataclass(frozen=True)
@@ -74,21 +91,32 @@ class SafeCommand:
     argv: tuple[str, ...]
     cwd: Path
     text: str
+    # Docker mode names its container, so a stop reaches the container and not only `docker`.
+    container_name: str | None
 
 
-def validate_command(text: str, guard: PathGuard) -> SafeCommand:
+def split_command(text: str) -> list[str]:
+    """Split like a POSIX shell, but keep backslashes: on Windows they separate folders."""
+    lexer = shlex.shlex(text, posix=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    lexer.escape = ""
+    return list(lexer)
+
+
+def validate_command(text: str, guard: PathGuard, target: ExecTarget) -> SafeCommand:
     if len(text) > MAX_COMMAND_CHARS:
         raise _blocked(text, f"It is longer than {MAX_COMMAND_CHARS} characters.")
     if any(part in text for part in _SHELL_PARTS):
         raise _blocked(text, "It chains commands or has hidden characters. Run one command.")
     try:
-        argv = shlex.split(text)
+        argv = split_command(text)
     except ValueError as error:
         raise _blocked(text, f"It could not be read as a command: {error}.") from error
     if not argv:
         raise _blocked(text, "It is empty.")
-    program, rule = _program(argv[0], guard, text)
-    name = argv[0].removeprefix("./").rsplit("/", 1)[-1]
+    program, rule = _program(argv[0], guard, text, target)
+    name = _program_name(argv[0], target).rsplit("/", 1)[-1]
     for arg in argv[1:]:
         _check_flag(arg, name, text)
     words = _words_to_match(argv)
@@ -104,7 +132,7 @@ def validate_command(text: str, guard: PathGuard) -> SafeCommand:
         raise _blocked(text, "python -c may only run one 'import module' line.")
     for arg in argv[1:]:
         _check_arg(arg, guard, text)
-    return SafeCommand((program, *argv[1:]), guard.workspace, text)
+    return SafeCommand((program, *argv[1:]), guard.workspace, text, None)
 
 
 def _words_to_match(argv: list[str]) -> tuple[str, ...]:
@@ -115,15 +143,23 @@ def _words_to_match(argv: list[str]) -> tuple[str, ...]:
     return tuple(words)
 
 
-def _program(first: str, guard: PathGuard, text: str) -> tuple[str, Rule]:
-    name = first.removeprefix("./")
-    if name in WORKSPACE_PROGRAMS:
+def _program_name(first: str, target: ExecTarget) -> str:
+    """.\\mvnw.cmd is ./mvnw.cmd, and Windows ignores case in program names."""
+    name = first.replace("\\", "/").removeprefix("./")
+    return name.lower() if target == "windows" else name
+
+
+def _program(first: str, guard: PathGuard, text: str, target: ExecTarget) -> tuple[str, Rule]:
+    name = _program_name(first, target)
+    programs = {_program_name(key, target): key for key in WORKSPACE_PROGRAMS[target]}
+    if name in programs:
+        key = programs[name]
         # Check the folder, not the file: a venv's python is a link to the system Python.
-        folder = _inside(str(Path(name).parent), guard, text)
-        return str(folder / Path(name).name), WORKSPACE_PROGRAMS[name]
-    if first.rsplit("/", 1)[-1] in _NEVER:
+        folder = _inside(str(Path(key).parent), guard, text)
+        return str(folder / Path(key).name), WORKSPACE_PROGRAMS[target][key]
+    if name.rsplit("/", 1)[-1] in _NEVER:
         raise _blocked(text, f"{first} is never allowed.")
-    if "/" in first or name not in ALLOWED:
+    if "/" in first.replace("\\", "/") or name not in ALLOWED:
         raise _blocked(text, f"{first} is not on the allowlist.")
     return name, ALLOWED[name]
 
@@ -145,7 +181,8 @@ def _check_arg(arg: str, guard: PathGuard, text: str) -> None:
     if arg.startswith((">", "<", "2>")):
         raise _blocked(text, f"{arg!r} redirects output. Run the command without it.")
     is_glued_short_flag = arg.startswith("-") and not arg.startswith("--") and len(arg) > 2
-    if is_glued_short_flag and "=" not in arg and any(part in arg for part in ("/", "..", "~")):
+    has_path = any(part in arg for part in ("/", "\\", "..", "~")) or WINDOWS_DRIVE.search(arg)
+    if is_glued_short_flag and "=" not in arg and has_path:
         raise _blocked(text, f"{arg!r}: put a space between a short flag and a path.")
     values = [arg]
     if "=" in arg:
@@ -156,8 +193,13 @@ def _check_arg(arg: str, guard: PathGuard, text: str) -> None:
         if "://" in value:
             if not value.removeprefix("git+").startswith("https://"):
                 raise _blocked(text, f"{arg!r}: only https:// links are allowed.")
-        elif "/" in value or value.startswith((".", "~")):
+        elif _looks_like_path(value):
             _inside(value, guard, text)
+
+
+def _looks_like_path(value: str) -> bool:
+    has_separator = "/" in value or "\\" in value
+    return has_separator or value.startswith((".", "~")) or bool(WINDOWS_DRIVE.match(value))
 
 
 def _inside(path: str, guard: PathGuard, text: str) -> Path:

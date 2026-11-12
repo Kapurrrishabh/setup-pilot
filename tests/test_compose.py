@@ -105,7 +105,18 @@ def test_mounts_that_reach_outside_the_repo_are_flagged(tmp_path, volume):
     assert warnings_for(tmp_path, f"    volumes: ['{volume}']\n")
 
 
-@pytest.mark.parametrize("volume", ["./data:/data", "data_volume:/var/lib/db", "/app/node_modules"])
+@pytest.mark.parametrize(
+    "volume",
+    [r"'C:\Users:/host'", "'C:/Users:/host'", r"'\\.\pipe\docker_engine:\\.\pipe\docker_engine'",
+     r"'..\..\secrets:/s'", r"{source: 'D:\data', target: /data}"],
+)  # fmt: skip
+def test_windows_host_paths_mounted_into_a_container_are_flagged(tmp_path, volume):
+    assert "from your machine" in warnings_for(tmp_path, f"    volumes: [{volume}]\n")[0]
+
+
+@pytest.mark.parametrize(
+    "volume", ["./data:/data", r".\data:/data", "data_volume:/var/lib/db", "/app/node_modules"]
+)
 def test_repo_mounts_and_named_or_anonymous_volumes_are_not_flagged(tmp_path, volume):
     assert warnings_for(tmp_path, f"    volumes: ['{volume}']\n") == ()
 

@@ -148,7 +148,7 @@ class Settings(_Strict):
 
 def load_settings(config_path: Path) -> Settings:
     try:
-        return Settings.model_validate(yaml.safe_load(config_path.read_text()))
+        return Settings.model_validate(yaml.safe_load(config_path.read_text(encoding="utf-8")))
     except FileNotFoundError as error:
         raise ConfigInvalid(
             f"{config_path} was not found.",

@@ -14,6 +14,8 @@ DATA_TABLES = ("runs", "steps", "token_usage", "llm_cache", "metrics", "chat_rep
 def pg_pool():
     """A pool on the test database, or skip when there is none (but never skip in CI)."""
     if not TEST_DATABASE_URL:
+        if os.environ.get("SETUPPILOT_SKIP_DB_TESTS") == "1":
+            pytest.skip("SETUPPILOT_SKIP_DB_TESTS=1: the Postgres tests run in the Linux CI job.")
         if os.environ.get("CI"):
             pytest.fail("TEST_DATABASE_URL must be set in CI, or the Postgres tests never run.")
         pytest.skip("TEST_DATABASE_URL is not set, so Postgres tests are skipped.")
@@ -37,6 +39,15 @@ def empty_pg(pg_pool):
     with pg_pool.connection() as conn:
         conn.execute(f"truncate {', '.join(DATA_TABLES)} restart identity cascade")
     return pg_pool
+
+
+@pytest.fixture
+def can_symlink(tmp_path):
+    """Skips the test where this account cannot make symlinks."""
+    try:
+        (tmp_path / ".symlink-check").symlink_to(tmp_path, target_is_directory=True)
+    except OSError:
+        pytest.skip("Making symlinks needs admin rights or Developer Mode on Windows.")
 
 
 @pytest.fixture(autouse=True)

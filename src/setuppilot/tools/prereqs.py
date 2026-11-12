@@ -1,13 +1,17 @@
 """Check that the tools a stack needs are installed, and say how to install the missing ones."""
 
+import os
 import re
-import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
-from setuppilot.tools.detect import JAVA_WRAPPERS, StackCandidate
+from setuppilot.guardrails.commands import JAVA_WRAPPERS, ExecTarget
+from setuppilot.guardrails.process_tree import start_tree
+from setuppilot.guardrails.runner import HOST_TARGET, child_env, find_program, launch_args
+from setuppilot.tools.detect import StackCandidate
 
 # Each tool: the command that prints its version, and how to install it.
 # Python projects get their venv from uv, so uv stands in for Python.
@@ -56,7 +60,7 @@ TOOLS: dict[str, tuple[tuple[str, ...], str]] = {
         "Docker Compose comes with Docker Desktop: https://docs.docker.com/compose/",
     ),
     "docker engine": (
-        ("docker", "info", "--format", "{{.ServerVersion}}"),
+        ("docker", "info", "--format", "{{.OSType}}"),
         "Start Docker Desktop, then try again.",
     ),
 }
@@ -107,28 +111,33 @@ class ToolProbe(Protocol):
 
 class SystemToolProbe:
     def run(self, command: tuple[str, ...]) -> Probe:
-        executable = shutil.which(command[0])
-        if executable is None:
+        # The same environment and program lookup as the commands themselves get.
+        env = child_env(os.environ, HOST_TARGET)
+        program = find_program(command[0], env)
+        if program is None:
             return Probe(False, "")
+        args, executable = launch_args(program, command[1:], env, HOST_TARGET)
         # Run outside the repo: yarn, for one, would run a script named in the repo's config.
-        with tempfile.TemporaryDirectory() as neutral_dir:
-            try:
-                done = subprocess.run(  # noqa: S603 - fixed version command, no shell
-                    [executable, *command[1:]],
-                    capture_output=True,
-                    text=True,
-                    timeout=_VERSION_TIMEOUT_SECONDS,
-                    cwd=neutral_dir,
-                    check=False,
-                )
-            except subprocess.TimeoutExpired:
-                return Probe(True, "")
-        output = (done.stdout or done.stderr).strip()
-        return Probe(True, output.splitlines()[0] if done.returncode == 0 and output else "")
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as neutral_dir:
+            cwd = Path(neutral_dir)
+            process, tree = start_tree(args, cwd, env, executable, stderr=subprocess.PIPE)
+            with process:
+                try:
+                    stdout, stderr = process.communicate(timeout=_VERSION_TIMEOUT_SECONDS)
+                except subprocess.TimeoutExpired:
+                    return Probe(True, "")
+                finally:
+                    # On Windows the node or java that npm.cmd or gradle.bat started holds the
+                    # output open, so a time limit that stops only cmd.exe would never end.
+                    tree.close()
+        output = (stdout or stderr).decode("utf-8", errors="replace").strip()
+        return Probe(True, output.splitlines()[0] if process.returncode == 0 and output else "")
 
 
-def check_prerequisites(candidate: StackCandidate, probe: ToolProbe) -> tuple[ToolCheck, ...]:
-    wrapper = JAVA_WRAPPERS.get(candidate.manager)
+def check_prerequisites(
+    candidate: StackCandidate, probe: ToolProbe, target: ExecTarget
+) -> tuple[ToolCheck, ...]:
+    wrapper = JAVA_WRAPPERS[target].get(candidate.manager)
     skipped = {"mvn", "gradle"} if wrapper in candidate.evidence else set()
     checks = []
     for tool in _TOOLS_FOR_MANAGER[candidate.manager]:
@@ -140,6 +149,13 @@ def check_prerequisites(candidate: StackCandidate, probe: ToolProbe) -> tuple[To
             checks.append(ToolCheck(tool, False, None, f"Not installed. {guidance}"))
         elif not result.output:
             problem = f"Installed, but `{' '.join(command)}` did not answer. {guidance}"
+            checks.append(ToolCheck(tool, False, None, problem))
+        elif tool == "docker engine" and result.output != "linux":
+            # Docker mode and Compose run Linux images, which Windows containers mode cannot.
+            problem = (
+                f"Docker runs {result.output} containers. "
+                "Switch Docker Desktop to Linux containers."
+            )
             checks.append(ToolCheck(tool, False, None, problem))
         else:
             mismatch = _pin_mismatch(candidate, tool, result.output)

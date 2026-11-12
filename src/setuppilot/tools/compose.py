@@ -1,10 +1,12 @@
 """Find Docker Compose files and flag settings that give a container power over your machine."""
 
 from dataclasses import dataclass
-from pathlib import PurePosixPath
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 
 import yaml
+
+from setuppilot.guardrails.commands import WINDOWS_DRIVE
 
 # Copied from Docker's compose-go (cli/options.go), in its order. Overrides are applied on top.
 COMPOSE_NAMES = ("compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml")
@@ -23,6 +25,9 @@ _MAX_WARNING_CHARS = 300
 _PORT_WARNING = "is open to your whole network"
 _HOST_SHARING_KEYS = ("network_mode", "pid", "ipc", "userns_mode", "uts", "cgroup")
 _TRUE_WORDS = {"true", "yes", "on", "1"}
+# Host paths on Windows start with a drive (C:\x, C:/x) or \ (\\.\pipe\docker_engine is the
+# Docker engine itself).
+_HOST_PATH_STARTS = ("/", ".", "~", "$", "\\")
 
 
 @dataclass(frozen=True)
@@ -190,23 +195,28 @@ def _bind_source(volume: Any) -> Any:
     # into gigabytes.
     if isinstance(volume, dict):
         source = volume.get("source")
-        is_bind = volume.get("type") == "bind" or (
-            isinstance(source, str) and source.startswith(("/", ".", "~", "$"))
-        )
+        is_bind = volume.get("type") == "bind" or (isinstance(source, str) and _is_host(source))
         return source if is_bind and isinstance(source, str) else None
     if isinstance(volume, str):
-        if ":" not in volume:
+        # The colon of a drive (C:\x:/host) does not end the host part.
+        start = 2 if WINDOWS_DRIVE.match(volume) else 0
+        if ":" not in volume[start:]:
             return None
-        source = volume.split(":", 1)[0]
-        return source if source.startswith(("/", ".", "~", "$")) else None
+        source = volume[: volume.index(":", start)]
+        return source if _is_host(source) else None
     return _NOT_UNDERSTOOD
 
 
+def _is_host(source: str) -> bool:
+    return source.startswith(_HOST_PATH_STARTS) or bool(WINDOWS_DRIVE.match(source))
+
+
 def _leaves_repo(source: str, folder: PurePosixPath) -> bool:
-    if source.startswith(("/", "~")) or "$" in source:
+    if source.startswith(("/", "~", "\\")) or "$" in source or WINDOWS_DRIVE.match(source):
         return True
     depth = len(folder.parts)
-    for part in PurePosixPath(source).parts:
+    # Windows rules split on both / and \, so ..\.. counts on every system.
+    for part in PureWindowsPath(source).parts:
         depth += -1 if part == ".." else 0 if part == "." else 1
         if depth < 0:
             return True

@@ -126,6 +126,15 @@ def test_maven_wrapper_is_part_of_the_evidence(tmp_path):
     assert result.candidates[0].evidence == ("pom.xml", "mvnw")
 
 
+def test_wrappers_for_every_system_are_part_of_the_evidence(tmp_path):
+    files = {"build.gradle": "", "gradlew": "#!/bin/sh", "gradlew.bat": "@echo off"}
+    assert detect(tmp_path, files).candidates[0].evidence == (
+        "build.gradle",
+        "gradlew",
+        "gradlew.bat",
+    )
+
+
 def test_maven_and_gradle_together_are_a_conflict(tmp_path):
     result = detect(tmp_path, {"pom.xml": "<project/>", "build.gradle": ""})
     assert found(result) == [("java", "maven"), ("java", "gradle")]
@@ -191,7 +200,7 @@ def test_compose_file_in_a_subfolder_is_noted(tmp_path):
     assert "docker/docker-compose.yml" in notes[0]
 
 
-def test_symlinked_manifest_is_noted(tmp_path):
+def test_symlinked_manifest_is_noted(tmp_path, can_symlink):
     repo = make_repo(tmp_path / "repo", {"real.txt": "x"})
     (repo / "package.json").symlink_to(repo / "real.txt")
     notes = detect_stacks(scan_repo(repo)).notes

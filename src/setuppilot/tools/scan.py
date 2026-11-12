@@ -56,16 +56,20 @@ def scan_repo(root: Path) -> RepoScan:
     for folder, dirs, names in os.walk(root):
         here = Path(folder)
         for name in dirs + names:
-            if (here / name).is_symlink():
+            if _is_link(here / name):
                 symlinks.append((here / name).relative_to(root).as_posix())
         # Skipped folders are still searched for links: git checks out a link in build/ too.
-        dirs[:] = sorted(d for d in dirs if d != ".git")
+        # os.walk goes into Windows junctions, so they are taken out here.
+        dirs[:] = sorted(d for d in dirs if d != ".git" and not (here / d).is_junction())
         if not SKIP_DIRS.isdisjoint(here.relative_to(root).parts):
             continue
         files += [
-            (here / n).relative_to(root).as_posix()
-            for n in sorted(names)
-            if not (here / n).is_symlink()
+            (here / n).relative_to(root).as_posix() for n in sorted(names) if not _is_link(here / n)
         ]
     committed = tuple(sorted(d for d in _UNTRUSTED_IF_COMMITTED if (root / d).is_dir()))
     return RepoScan(root, tuple(files), tuple(sorted(symlinks)), committed)
+
+
+def _is_link(path: Path) -> bool:
+    """A Windows junction points elsewhere like a symlink, but is_symlink() says no to it."""
+    return path.is_symlink() or path.is_junction()

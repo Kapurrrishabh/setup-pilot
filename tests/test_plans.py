@@ -5,7 +5,7 @@ import pytest
 
 from setuppilot.errors import StackNotFound
 from setuppilot.guardrails.runner import CommandOutput
-from setuppilot.setup.plans import code_checks, install_plan, quiet_checks
+from setuppilot.setup import plans
 from setuppilot.tools.detect import StackCandidate
 
 
@@ -15,6 +15,20 @@ def cand(stack, manager, evidence=()):
 
 def texts(plan):
     return [p.text for p in plan]
+
+
+# The tests below are for macOS and Linux unless they name a target, so they give the same
+# answer on every system that runs them.
+def install_plan(candidate, top, is_project, target="posix"):
+    return plans.install_plan(candidate, top, is_project, target)
+
+
+def code_checks(candidate, files, target="posix"):
+    return plans.code_checks(candidate, files, target)
+
+
+def quiet_checks(candidate, repo, run, target="posix"):
+    return plans.quiet_checks(candidate, repo, run, target)
 
 
 @pytest.mark.parametrize(
@@ -70,8 +84,26 @@ def test_checks_that_run_project_code_for_each_stack(candidate, files, expected)
     assert texts(code_checks(candidate, files)) == expected
 
 
+@pytest.mark.parametrize(
+    ("candidate", "expected"),
+    [(cand("java", "maven", ["pom.xml", "mvnw", "mvnw.cmd"]),
+      ["./mvnw.cmd dependency:resolve -Dmaven.repo.local=.m2/repository"]),
+     (cand("java", "maven", ["pom.xml", "mvnw"]),
+      ["mvn dependency:resolve -Dmaven.repo.local=.m2/repository"]),
+     (cand("java", "gradle", ["build.gradle", "gradlew", "gradlew.bat"]),
+      ["./gradlew.bat dependencies"])],
+)  # fmt: skip
+def test_windows_uses_the_wrapper_made_for_windows(candidate, expected):
+    assert texts(install_plan(candidate, frozenset(), False, "windows")) == expected
+
+
+def test_windows_import_check_uses_the_windows_venv_layout():
+    checks = code_checks(cand("python", "pip"), ("mypkg/__init__.py",), "windows")
+    assert texts(checks) == [".venv/Scripts/python.exe -c 'import mypkg'"]
+
+
 def output(exit_code=0, text=""):
-    return CommandOutput(("x",), exit_code, text, False, 1)
+    return CommandOutput(("x",), exit_code, text, False, 1, False)
 
 
 def test_python_checks_need_the_venv_and_a_clean_pip_check(tmp_path):
@@ -82,6 +114,20 @@ def test_python_checks_need_the_venv_and_a_clean_pip_check(tmp_path):
         ("Python environment exists", True),
         ("Installed packages fit together", False),
     ]
+
+
+@pytest.mark.parametrize(
+    ("manager", "made", "expected"),
+    [("pip", ".venv/Scripts/python.exe", True), ("pip", ".venv/bin/python", False),
+     ("conda", ".conda-env/python.exe", True), ("conda", ".conda-env/bin/python", False)],
+)  # fmt: skip
+def test_windows_environment_check_looks_where_windows_puts_python(
+    tmp_path, manager, made, expected
+):
+    (tmp_path / made).parent.mkdir(parents=True)
+    (tmp_path / made).write_text("", encoding="utf-8")
+    checks = quiet_checks(cand("python", manager), tmp_path, lambda text: output(), "windows")
+    assert checks[0].is_passed is expected
 
 
 def test_missing_node_modules_fails_the_node_check(tmp_path):
@@ -197,7 +243,7 @@ def test_node_project_without_dependencies_passes_without_node_modules(tmp_path)
     assert check.is_passed
 
 
-def test_venv_python_that_is_a_link_into_a_container_still_counts(tmp_path):
+def test_venv_python_that_is_a_link_into_a_container_still_counts(tmp_path, can_symlink):
     (tmp_path / ".venv" / "bin").mkdir(parents=True)
     (tmp_path / ".venv" / "bin" / "python").symlink_to("/usr/local/bin/python-in-container")
     checks = quiet_checks(cand("python", "uv"), tmp_path, lambda t: output())

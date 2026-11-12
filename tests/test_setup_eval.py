@@ -1,4 +1,7 @@
+import os
 import shutil
+import stat
+import sys
 
 import pytest
 
@@ -20,13 +23,20 @@ from tests.test_agent import PIP_REPO, make_agent
 from tests.test_chat_eval import stores_with
 from tests.test_config import REAL_CONFIG
 
+PIP_INSTALL = ("uv venv .venv", "uv pip install --python .venv -r requirements.txt")
 CASE = SetupCase(
     "https://github.com/someone/demo", "python", "pip",
-    ("uv venv .venv", "uv pip install --python .venv -r requirements.txt"),
+    {"posix": PIP_INSTALL, "windows": PIP_INSTALL},
 )  # fmt: skip
 REPOS_YAML = (
     "repos:\n  - url: https://github.com/a/b\n    expected_stack: go\n"
     "    expected_manager: go\n    expected_install: [go mod download]\n"
+    "    expected_result: verified\n"
+)
+MAVEN_YAML = (
+    "repos:\n  - url: https://github.com/a/j\n    expected_stack: java\n"
+    "    expected_manager: maven\n    expected_install:\n"
+    "      posix: [./mvnw compile]\n      windows: [./mvnw.cmd compile]\n"
     "    expected_result: verified\n"
 )
 
@@ -48,7 +58,7 @@ def test_evaluator_skips_readme_suggestions_but_runs_its_own_commands():
 def test_a_pip_repo_scores_right_stack_right_install_and_verified(tmp_path):
     agent, deps = make_agent(tmp_path, PIP_REPO)
     score = run_setup_case(
-        CASE, agent, deps.runs, _NoUsage(), tmp_path / "dest", False, clock=lambda: 0.0
+        CASE, agent, deps.runs, _NoUsage(), tmp_path / "dest", False, "posix", clock=lambda: 0.0
     )
     assert (score.detected, score.is_stack_right, score.is_install_right, score.is_verified) == (
         "python/pip",
@@ -61,10 +71,23 @@ def test_a_pip_repo_scores_right_stack_right_install_and_verified(tmp_path):
 
 def test_a_wrong_expected_install_is_scored_wrong(tmp_path):
     agent, deps = make_agent(tmp_path, PIP_REPO)
-    wrong = SetupCase(CASE.url, "python", "pip", ("uv sync",))
+    wrong = SetupCase(CASE.url, "python", "pip", {"posix": ("uv sync",), "windows": ("uv sync",)})
     assert not run_setup_case(
-        wrong, agent, deps.runs, _NoUsage(), tmp_path / "dest", False
+        wrong, agent, deps.runs, _NoUsage(), tmp_path / "dest", False, "posix"
     ).is_install_right
+
+
+# On Windows the native run uses mvnw.cmd; in Docker mode it runs ./mvnw in the Linux image.
+@pytest.mark.parametrize("use_docker", [False, True])
+def test_windows_install_is_scored_against_the_commands_for_where_it_runs(tmp_path, use_docker):
+    files = {"pom.xml": "<project/>", "mvnw": "", "mvnw.cmd": ""}
+    agent, deps = make_agent(tmp_path, files, host="windows")
+    resolve = "dependency:resolve -Dmaven.repo.local=.m2/repository"
+    expected = {"posix": (f"./mvnw {resolve}",), "windows": (f"./mvnw.cmd {resolve}",)}
+    case = SetupCase("https://github.com/someone/demo", "java", "maven", expected)
+    dest = tmp_path / "dest"
+    score = run_setup_case(case, agent, deps.runs, _NoUsage(), dest, use_docker, "windows")
+    assert score.is_install_right
 
 
 def test_table_has_a_total_row():
@@ -76,7 +99,21 @@ def test_table_has_a_total_row():
 def test_cases_load_from_yaml(tmp_path):
     path = tmp_path / "repos.yaml"
     path.write_text(REPOS_YAML)
-    assert load_setup_cases(path)[0].expected_install == ("go mod download",)
+    assert load_setup_cases(path)[0].expected_install["windows"] == ("go mod download",)
+
+
+def test_case_can_expect_different_commands_on_windows(tmp_path):
+    (case,) = load_setup_cases(_write(tmp_path, MAVEN_YAML))
+    assert case.expected_install == {
+        "posix": ("./mvnw compile",),
+        "windows": ("./mvnw.cmd compile",),
+    }
+
+
+def test_case_that_expects_commands_for_only_one_system_is_refused(tmp_path):
+    path = _write(tmp_path, MAVEN_YAML.replace("      windows: [./mvnw.cmd compile]\n", ""))
+    with pytest.raises(ValueError, match="posix and windows lists"):
+        load_setup_cases(path)
 
 
 def test_repo_expected_not_to_verify_is_refused_because_the_table_cannot_score_it(tmp_path):
@@ -112,10 +149,12 @@ def test_docker_eval_does_not_carry_on_from_native_scores(tmp_path):
     assert agent.use_docker == [False, True]
 
 
-def test_folder_the_evaluator_cannot_clear_shows_the_real_error(tmp_path):
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows ignores read-only on folders")
+@pytest.mark.parametrize("mode", [0o500, 0o300], ids=["cannot-delete-inside", "cannot-list"])
+def test_folder_the_evaluator_cannot_clear_shows_the_real_error(tmp_path, mode):
     stores = stores_with(InMemoryChunkIndex())
     locked = make_repo(tmp_path / "ws/someone__demo/locked", {"file": "x"})
-    locked.chmod(0o500)
+    locked.chmod(mode)
     try:
         with pytest.raises(PermissionError):
             run_setup_eval(
@@ -123,6 +162,36 @@ def test_folder_the_evaluator_cannot_clear_shows_the_real_error(tmp_path):
             )
     finally:
         locked.chmod(0o700)
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="only Windows refuses to delete read-only files"
+)
+def test_read_only_files_from_an_earlier_run_are_cleared(tmp_path):
+    # git makes its object files read-only, so the second evaluation run met them on Windows.
+    stores = stores_with(InMemoryChunkIndex())
+    old = make_repo(tmp_path / "ws/someone__demo/.git/objects", {"ab": "x"}) / "ab"
+    os.chmod(old, stat.S_IREAD)
+    run_setup_eval(
+        stores, _DockerSpy(stores.runs), [CASE], tmp_path / "ws", tmp_path / "out", False
+    )
+    assert not old.exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="only Windows locks a file that is open")
+def test_file_held_open_by_another_program_still_stops_the_evaluation(tmp_path):
+    stores = stores_with(InMemoryChunkIndex())
+    held = make_repo(tmp_path / "ws/someone__demo", {"busy.log": "x"}) / "busy.log"
+    with held.open(encoding="utf-8"), pytest.raises(PermissionError):
+        run_setup_eval(
+            stores, _DockerSpy(stores.runs), [CASE], tmp_path / "ws", tmp_path / "out", False
+        )
+
+
+def _write(tmp_path, text):
+    path = tmp_path / "repos.yaml"
+    path.write_text(text, encoding="utf-8")
+    return path
 
 
 class _NoUsage:

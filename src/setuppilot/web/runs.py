@@ -11,7 +11,7 @@ from setuppilot.agent.driver import Finished, SetupAgent, Stopped, Waiting
 from setuppilot.db.reports import HISTORY_LIMIT
 from setuppilot.db.runs import FINISHED_STATUSES, Run, RunStore
 from setuppilot.errors import SetupPilotError
-from setuppilot.guardrails.runner import cancel_group
+from setuppilot.guardrails.process_tree import ProcessTree
 from setuppilot.logging_setup import run_id_var
 from setuppilot.tools.clone import repo_folder
 from setuppilot.tools.github_url import parse_github_url
@@ -24,22 +24,22 @@ class CommandTracker:
     """Which command each run is running now, so Cancel can stop it. The runner reports in."""
 
     def __init__(self) -> None:
-        self._groups: dict[str, int] = {}
+        self._trees: dict[str, ProcessTree] = {}
         self._lock = threading.Lock()
 
-    def track(self, group_id: int) -> None:
+    def track(self, tree: ProcessTree) -> None:
         run_id = run_id_var.get()
         if run_id is not None:
             with self._lock:
-                self._groups[run_id] = group_id
+                self._trees[run_id] = tree
 
-    def group_for(self, run_id: str) -> int | None:
+    def tree_for(self, run_id: str) -> ProcessTree | None:
         with self._lock:
-            return self._groups.get(run_id)
+            return self._trees.get(run_id)
 
     def forget(self, run_id: str) -> None:
         with self._lock:
-            self._groups.pop(run_id, None)
+            self._trees.pop(run_id, None)
 
 
 class RunManager:
@@ -86,9 +86,9 @@ class RunManager:
             raise RunNotWaiting("This run has already finished, so there is nothing to cancel.")
         # Saved first: every step checks it, so even a busy run stops at its next step.
         self._runs.set_status(run_id, "cancelled", "RunCancelled", "You cancelled this run.")
-        group = self._tracker.group_for(run_id)
-        if group is not None:
-            threading.Thread(target=cancel_group, args=(group,), daemon=True).start()
+        tree = self._tracker.tree_for(run_id)
+        if tree is not None:
+            threading.Thread(target=tree.stop, daemon=True).start()
 
     def shown_status(self, run: Run) -> str:
         """A run saved as running with no worker was stopped by a restart, so it waits for you."""

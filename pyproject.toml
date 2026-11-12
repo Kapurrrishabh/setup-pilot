@@ -14,6 +14,7 @@ classifiers = [
     "Framework :: Flask",
     "Intended Audience :: Developers",
     "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -85,8 +86,13 @@ python_version = "3.12"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
-# Raised inside the langsmith package itself, not by our code.
-filterwarnings = ["ignore:langsmith.wrappers._openai_agents is deprecated:DeprecationWarning"]
+# Raised inside the langsmith package itself, not by our code. With PYTHONWARNDEFAULTENCODING=1
+# (the Windows CI job), a text file our code opens without an encoding fails the test, because
+# Windows would read it as cp1252, not UTF-8.
+filterwarnings = [
+    "ignore:langsmith.wrappers._openai_agents is deprecated:DeprecationWarning",
+    "error::EncodingWarning:setuppilot.*",
+]
 
 [tool.coverage.run]
 source = ["setuppilot"]

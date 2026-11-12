@@ -8,15 +8,21 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from setuppilot.errors import StackNotFound
+from setuppilot.guardrails.commands import JAVA_WRAPPERS, VENV_PYTHON, ExecTarget
 from setuppilot.guardrails.commands import NODE_MANAGERS as _NODE_MANAGERS
 from setuppilot.guardrails.runner import CommandOutput
 from setuppilot.tools.compose import MAX_READ_BYTES, find_compose_files
-from setuppilot.tools.detect import JAVA_WRAPPERS, StackCandidate
+from setuppilot.tools.detect import StackCandidate
 
 _PYTHON_MANAGERS = {"pip", "uv", "poetry", "pipenv", "pdm"}
 SUPPORTED_MANAGERS = _PYTHON_MANAGERS | _NODE_MANAGERS | {
     "conda", "go", "cargo", "bundler", "maven", "gradle", "compose",
 }  # fmt: skip
+# conda puts python.exe at the top of a Windows environment, not in bin/.
+_CONDA_PYTHON: dict[ExecTarget, str] = {
+    "posix": ".conda-env/bin/python",
+    "windows": ".conda-env/python.exe",
+}
 # Keeps Maven's downloads inside the repo folder.
 _MAVEN_REPO = "-Dmaven.repo.local=.m2/repository"
 # uv is told the venv to use, so neither a parent folder's .venv nor the repo's own uv
@@ -39,7 +45,10 @@ class Check:
 
 
 def install_plan(
-    candidate: StackCandidate, top_files: frozenset[str], is_installable_project: bool
+    candidate: StackCandidate,
+    top_files: frozenset[str],
+    is_installable_project: bool,
+    target: ExecTarget,
 ) -> list[PlannedCommand]:
     """Commands that install the project's dependencies inside the repo folder.
     is_installable_project: the repo itself can be pip-installed (see is_installable_project)."""
@@ -71,10 +80,10 @@ def install_plan(
         case "bundler":
             return [PlannedCommand("bundle install", "Install the Ruby gems into vendor/bundle.")]
         case "maven":
-            command = f"{_java_program(candidate)} dependency:resolve {_MAVEN_REPO}"
+            command = f"{_java_program(candidate, target)} dependency:resolve {_MAVEN_REPO}"
             return [PlannedCommand(command, "Download the Java dependencies into the repo folder.")]
         case "gradle":
-            command = f"{_java_program(candidate)} dependencies"
+            command = f"{_java_program(candidate, target)} dependencies"
             return [PlannedCommand(command, "Download the Java dependencies.")]
         case "compose":
             command = f"docker compose -f {candidate.evidence[0]} up -d --build --wait"
@@ -122,7 +131,9 @@ def _pip_install(candidate: StackCandidate, is_installable: bool) -> str:
     return f"uv pip install {_UV_TARGET} " + " ".join(parts)
 
 
-def code_checks(candidate: StackCandidate, files: tuple[str, ...]) -> list[PlannedCommand]:
+def code_checks(
+    candidate: StackCandidate, files: tuple[str, ...], target: ExecTarget
+) -> list[PlannedCommand]:
     """Checks that run the project's own code, so they need approval like installs."""
     match candidate.manager:
         case manager if manager in _PYTHON_MANAGERS:
@@ -131,7 +142,7 @@ def code_checks(candidate: StackCandidate, files: tuple[str, ...]) -> list[Plann
                 return []
             return [
                 PlannedCommand(
-                    f".venv/bin/python -c 'import {package}'",
+                    f"{VENV_PYTHON[target]} -c 'import {package}'",
                     f"Check: import {package} (this runs the package's own code).",
                 )
             ]
@@ -145,27 +156,28 @@ def code_checks(candidate: StackCandidate, files: tuple[str, ...]) -> list[Plann
                 PlannedCommand("bundle check", "Check: all gems are installed (runs the Gemfile).")
             ]
         case "maven":
-            command = f"{_java_program(candidate)} compile {_MAVEN_REPO}"
+            command = f"{_java_program(candidate, target)} compile {_MAVEN_REPO}"
             return [PlannedCommand(command, "Check: the Java code compiles.")]
         case "gradle":
-            return [PlannedCommand(f"{_java_program(candidate)} assemble", "Check: it builds.")]
+            command = f"{_java_program(candidate, target)} assemble"
+            return [PlannedCommand(command, "Check: it builds.")]
     return []
 
 
 def quiet_checks(
-    candidate: StackCandidate, repo: Path, run: Callable[[str], CommandOutput]
+    candidate: StackCandidate, repo: Path, run: Callable[[str], CommandOutput], target: ExecTarget
 ) -> list[Check]:
     """Checks that only read state and run no repo code, so they run without asking.
     `run` checks and runs one command."""
     checks: list[Check] = []
     manager = candidate.manager
     if manager in _PYTHON_MANAGERS:
-        checks.append(_exists(repo, ".venv/bin/python", "Python environment exists"))
+        checks.append(_exists(repo, VENV_PYTHON[target], "Python environment exists"))
         checks.append(
             _exit_zero(run(f"uv pip check {_UV_TARGET}"), "Installed packages fit together")
         )
     elif manager == "conda":
-        checks.append(_exists(repo, ".conda-env/bin/python", "Conda environment exists"))
+        checks.append(_exists(repo, _CONDA_PYTHON[target], "Conda environment exists"))
     elif manager in _NODE_MANAGERS:
         if not _has_node_dependencies(repo):
             checks.append(Check("Node packages", True, "package.json lists no dependencies."))
@@ -186,8 +198,8 @@ def quiet_checks(
     return checks
 
 
-def _java_program(candidate: StackCandidate) -> str:
-    wrapper = JAVA_WRAPPERS[candidate.manager]
+def _java_program(candidate: StackCandidate, target: ExecTarget) -> str:
+    wrapper = JAVA_WRAPPERS[target][candidate.manager]
     if wrapper in candidate.evidence:
         return f"./{wrapper}"
     return {"maven": "mvn", "gradle": "gradle"}[candidate.manager]

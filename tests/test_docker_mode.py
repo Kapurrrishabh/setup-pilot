@@ -1,11 +1,14 @@
-import os
+import functools
 
 import pytest
 
 from setuppilot.errors import CommandBlocked
-from setuppilot.guardrails.commands import validate_command
-from setuppilot.guardrails.docker_mode import docker_image_for, in_docker
+from setuppilot.guardrails import commands
+from setuppilot.guardrails.docker_mode import docker_image_for, docker_user, exec_target, in_docker
 from setuppilot.guardrails.paths import PathGuard
+
+# Commands in Docker mode run in a Linux image, whatever system SetupPilot runs on.
+validate_command = functools.partial(commands.validate_command, target="posix")
 
 
 def test_docker_mode_mounts_only_the_repo_and_drops_privileges(tmp_path):
@@ -15,7 +18,7 @@ def test_docker_mode_mounts_only_the_repo_and_drops_privileges(tmp_path):
     assert argv[:3] == ("docker", "run", "--rm")
     assert ("-v", f"{guard.workspace}:/work") == argv[argv.index("-v") : argv.index("-v") + 2]
     assert {
-        ("--user", f"{os.getuid()}:{os.getgid()}"),
+        ("--user", docker_user()),
         ("--cap-drop", "ALL"),
         ("--security-opt", "no-new-privileges"),
         ("--pids-limit", "512"),
@@ -48,8 +51,23 @@ def test_git_folder_is_mounted_read_only(tmp_path):
     (tmp_path / "repo").mkdir()
     guard = PathGuard(tmp_path / "repo")
     argv = in_docker(validate_command("npm ci", guard), "node:22").argv
-    assert f"type=bind,source={guard.workspace}/.git,target=/work/.git,readonly" in argv
+    assert f"type=bind,source={guard.workspace / '.git'},target=/work/.git,readonly" in argv
     assert "--init" in argv
+
+
+def test_container_gets_a_name_so_a_stop_can_reach_it(tmp_path):
+    (tmp_path / "repo").mkdir()
+    command = in_docker(validate_command("npm ci", PathGuard(tmp_path / "repo")), "node:22")
+    assert command.container_name and command.argv[3:5] == ("--name", command.container_name)
+
+
+@pytest.mark.parametrize(
+    ("host", "use_docker", "manager", "target"),
+    [("windows", True, "npm", "posix"), ("windows", True, "compose", "windows"),
+     ("windows", False, "npm", "windows"), ("posix", True, "maven", "posix")],
+)  # fmt: skip
+def test_docker_mode_runs_linux_commands_except_for_compose(host, use_docker, manager, target):
+    assert exec_target(host, use_docker, manager) == target
 
 
 def test_python_projects_use_an_image_that_has_uv():

@@ -1,6 +1,7 @@
 # Setup evaluation: 15 small public repos. Checked against the repos on 2026-11-02.
 # Stack, manager and install commands are what SetupPilot's detector and planner give for a
 # fresh clone. expected_result is a prediction for a normal laptop that has the stack's tools.
+# expected_install is one list, or posix and windows lists where the commands differ.
 repos:
   - url: https://github.com/pypa/sampleproject
     expected_stack: python
@@ -96,9 +97,11 @@ repos:
   - url: https://github.com/FasterXML/java-classmate
     expected_stack: java
     expected_manager: maven
-    expected_install: ["./mvnw dependency:resolve -Dmaven.repo.local=.m2/repository"]
+    expected_install:
+      posix: ["./mvnw dependency:resolve -Dmaven.repo.local=.m2/repository"]
+      windows: ["./mvnw.cmd dependency:resolve -Dmaven.repo.local=.m2/repository"]
     expected_result: verified
-    note: "Has mvnw (Maven 3.9.11). No runtime dependencies; the parent POM (oss-parent 80) is on Maven Central. Builds for Java 8, and CI tests JDK 8, 17, 21 and 25. Needs a JDK."
+    note: "Has mvnw and mvnw.cmd (Maven 3.9.11). No runtime dependencies; the parent POM (oss-parent 80) is on Maven Central. Builds for Java 8, and CI tests JDK 8, 17, 21 and 25. Needs a JDK."
 
   - url: https://github.com/dockersamples/wordsmith
     expected_stack: docker

@@ -10,10 +10,12 @@ from setuppilot.agent.driver import Finished, SetupAgent, Waiting
 from setuppilot.agent.graph import AgentDeps
 from setuppilot.config import load_settings
 from setuppilot.db.runs import InMemoryRunStore
+from setuppilot.guardrails.commands import VENV_PYTHON
 from setuppilot.guardrails.runner import CommandOutput
-from setuppilot.tools.prereqs import Probe
+from setuppilot.tools.prereqs import TOOLS, Probe
 from tests.fakes import FakeTransport, make_client, make_repo, reply
 from tests.test_config import REAL_CONFIG
+from tests.test_prereqs import FakeProbe
 
 SETTINGS = load_settings(REAL_CONFIG)
 PIP_REPO = {"requirements.txt": "requests\n", "README.md": "# Demo\nRun it with python app.py\n"}
@@ -22,26 +24,27 @@ PIP_REPO = {"requirements.txt": "requests\n", "README.md": "# Demo\nRun it with 
 class FakeRunner:
     """Records each command; makes the files a real install would make; fails on request."""
 
-    def __init__(self, failing: set[str] = frozenset()) -> None:
+    def __init__(self, failing: set[str] = frozenset(), venv_python=VENV_PYTHON["posix"]) -> None:
         self.texts: list[str] = []
         self.argvs: list[tuple[str, ...]] = []
         self._failing = failing
+        self._venv_python = venv_python
 
     def __call__(self, command):
         self.texts.append(command.text)
         self.argvs.append(command.argv)
         if "venv" in command.text or "sync" in command.text:
-            (command.cwd / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
-            (command.cwd / ".venv" / "bin" / "python").write_text("")
+            (command.cwd / self._venv_python).parent.mkdir(parents=True, exist_ok=True)
+            (command.cwd / self._venv_python).write_text("")
         if command.text in {"npm ci", "npm install"}:
             (command.cwd / "node_modules").mkdir(exist_ok=True)
         exit_code = 1 if command.text in self._failing else 0
-        return CommandOutput(command.argv, exit_code, "output", False, 5)
+        return CommandOutput(command.argv, exit_code, "output", False, 5, False)
 
 
 class AllInstalled:
     def run(self, command):
-        return Probe(True, "1.0.0")
+        return Probe(True, "linux" if command == TOOLS["docker engine"][0] else "1.0.0")
 
 
 class NothingInstalled:
@@ -59,8 +62,10 @@ def fake_clone(source):
 
 
 def make_agent(
-    tmp_path, files, *, llm=None, runner=None, probe=None, settings=SETTINGS, saver=None
-):
+    tmp_path, files, *, llm=None, runner=None, probe=None, settings=SETTINGS, saver=None,
+    host="posix",
+):  # fmt: skip
+    """host is posix unless a test names it, so a test gives the same answer on any system."""
     source = make_repo(tmp_path / "source", files)
     runs = InMemoryRunStore()
     deps = AgentDeps(
@@ -70,6 +75,7 @@ def make_agent(
         clone=fake_clone(source),
         probe=probe or AllInstalled(),
         run=runner or FakeRunner(),
+        host=host,
     )
     (tmp_path / "dest").mkdir(exist_ok=True)
     return SetupAgent(deps, saver or InMemorySaver()), deps
@@ -259,7 +265,7 @@ def test_waiting_run_survives_a_restart(tmp_path):
     agent, deps = make_agent(tmp_path, PIP_REPO, runner=runner, saver=saver)
     first = start(agent, tmp_path)
     restarted = SetupAgent(
-        AgentDeps(SETTINGS, deps.runs, None, deps.clone, deps.probe, runner), saver
+        AgentDeps(SETTINGS, deps.runs, None, deps.clone, deps.probe, runner, "posix"), saver
     )
     again = restarted.peek(first.run_id)
     assert again.question == first.question
@@ -288,12 +294,13 @@ def test_docker_mode_runs_the_commands_inside_a_container(tmp_path):
     assert runner.argvs and all(argv[:2] == ("docker", "run") for argv in runner.argvs)
 
 
-def test_repo_with_a_link_to_outside_files_is_refused(tmp_path):
+def test_repo_with_a_link_to_outside_files_is_refused(tmp_path, can_symlink):
     (tmp_path / "secret").mkdir()
     source = make_repo(tmp_path / "source", PIP_REPO)
     (source / ".venv").symlink_to(tmp_path / "secret", target_is_directory=True)
     runs = InMemoryRunStore()
-    deps = AgentDeps(SETTINGS, runs, None, fake_clone(source), AllInstalled(), FakeRunner())
+    clone = fake_clone(source)
+    deps = AgentDeps(SETTINGS, runs, None, clone, AllInstalled(), FakeRunner(), "posix")
     (tmp_path / "dest").mkdir()
     outcome = start(SetupAgent(deps, InMemorySaver()), tmp_path)
     assert runs.get_run(outcome.run_id).error_type == "PathBlocked"
@@ -329,7 +336,7 @@ def test_waiting_run_survives_a_restart_with_the_postgres_checkpointer(tmp_path,
 
     def agent_with_new_saver():
         saver = open_checkpointer(TEST_DATABASE_URL, TEST_DB_CONFIG)
-        deps = AgentDeps(SETTINGS, runs, None, fake_clone(source), AllInstalled(), runner)
+        deps = AgentDeps(SETTINGS, runs, None, fake_clone(source), AllInstalled(), runner, "posix")
         return SetupAgent(deps, saver), saver
 
     first_agent, first_saver = agent_with_new_saver()
@@ -497,6 +504,42 @@ def test_docker_mode_needs_a_running_docker_engine(tmp_path):
     assert "docker" in deps.runs.get_run(outcome.run_id).message
 
 
+def test_docker_mode_is_refused_when_docker_runs_windows_containers(tmp_path):
+    probe = FakeProbe({"uv": "uv 0.13", "docker": "Docker 27", "docker engine": "windows"})
+    agent, deps = make_agent(tmp_path, PIP_REPO, probe=probe)
+    outcome = start(agent, tmp_path, use_docker=True)
+    assert deps.runs.get_run(outcome.run_id).message.endswith("not installed: docker engine.")
+
+
+PACKAGE_REPO = {"pyproject.toml": "[project]\nname='demo'\n", "demo/__init__.py": ""}
+
+
+def asked_commands(agent, tmp_path, use_docker=False):
+    outcome, commands = start(agent, tmp_path, use_docker), []
+    while isinstance(outcome, Waiting):
+        commands.append(outcome.question["command"])
+        outcome = agent.answer(outcome.run_id, outcome.question_id, {"action": "approve"})
+    return commands, outcome
+
+
+def test_on_windows_the_import_check_uses_the_windows_venv(tmp_path):
+    agent, _ = make_agent(tmp_path, PACKAGE_REPO, host="windows")
+    commands, _ = asked_commands(agent, tmp_path)
+    assert commands[-1] == ".venv/Scripts/python.exe -c 'import demo'"
+
+
+def test_on_windows_a_windows_venv_verifies_the_setup(tmp_path):
+    runner = FakeRunner(venv_python=VENV_PYTHON["windows"])
+    agent, _ = make_agent(tmp_path, PACKAGE_REPO, runner=runner, host="windows")
+    assert asked_commands(agent, tmp_path)[1].is_verified
+
+
+def test_docker_mode_on_windows_plans_for_the_linux_container(tmp_path):
+    agent, _ = make_agent(tmp_path, PACKAGE_REPO, host="windows")
+    commands, _ = asked_commands(agent, tmp_path, use_docker=True)
+    assert commands[-1] == ".venv/bin/python -c 'import demo'"
+
+
 def test_docker_mode_leaves_compose_commands_as_they_are(tmp_path):
     runner = FakeRunner()
     agent, _ = make_agent(
@@ -550,7 +593,7 @@ def test_secret_in_a_failed_edited_command_is_hidden_from_the_run_and_report(tmp
     assert "t" * 20 not in deps.runs.get_run(first.run_id).message + outcome.report
 
 
-def test_command_is_checked_again_right_before_it_runs(tmp_path):
+def test_command_is_checked_again_right_before_it_runs(tmp_path, can_symlink):
     (tmp_path / "outside" / "bin").mkdir(parents=True)
     runner = FakeRunner()
 
@@ -568,7 +611,8 @@ def test_command_is_checked_again_right_before_it_runs(tmp_path):
 
 
 def test_cancel_during_a_busy_step_stops_before_the_next_step(tmp_path):
-    agent, deps, first = start_with_cancel(tmp_path, CancelAndKill("uv venv .venv", exit_code=0))
+    runner = CancelAndKill("uv venv .venv", exit_code=0, is_stopped=False)
+    agent, deps, first = start_with_cancel(tmp_path, runner)
     outcome = agent.answer(first.run_id, first.question_id, {"action": "approve"})
     assert isinstance(outcome, Finished)
     assert deps.runs.get_run(first.run_id).status == "cancelled"
@@ -578,14 +622,22 @@ class CancelAndKill:
     """Saves 'cancelled' while one command runs, as the web Cancel does. The command then exits
     -15 as if killed, or with exit_code when it finished before the kill landed."""
 
-    def __init__(self, text, exit_code=-15):
+    def __init__(self, text, exit_code=-15, is_stopped=True):
         self.text, self.exit_code, self.runs, self.run_id = text, exit_code, None, None
+        self.is_stopped = is_stopped
 
     def __call__(self, command):
         if command.text != self.text:
             return FakeRunner()(command)
         self.runs.set_status(self.run_id, "cancelled", "RunCancelled", "You cancelled this run.")
-        return CommandOutput(command.argv, self.exit_code, "Terminated", False, 5)
+        return CommandOutput(command.argv, self.exit_code, "Terminated", False, 5, self.is_stopped)
+
+
+def test_a_stopped_command_is_reported_as_stopped_even_with_exit_code_1(tmp_path):
+    # On Windows a command stopped by Cancel exits with 1, not with a negative code.
+    agent, _, first = start_with_cancel(tmp_path, CancelAndKill("uv venv .venv", exit_code=1))
+    outcome = approve_all(agent, first)
+    assert "- uv venv .venv: ran, but was stopped before it finished" in outcome.report
 
 
 def start_with_cancel(tmp_path, runner, llm=None):
@@ -605,7 +657,7 @@ def test_cancel_that_kills_the_running_command_is_saved_as_cancelled(tmp_path, k
 
 
 def test_cancel_during_a_check_that_still_passes_is_not_verified(tmp_path):
-    runner = CancelAndKill("uv pip check --python .venv", exit_code=0)
+    runner = CancelAndKill("uv pip check --python .venv", exit_code=0, is_stopped=False)
     agent, _, first = start_with_cancel(tmp_path, runner)
     assert not approve_all(agent, first).is_verified
 

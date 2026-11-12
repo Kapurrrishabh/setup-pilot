@@ -7,12 +7,14 @@ import pytest
 from setuppilot.config import RepoConfig
 from setuppilot.errors import CloneFailed, PrereqMissing
 from setuppilot.tools import clone
-from setuppilot.tools.clone import check_github_repo, clone_repo, git_clone
+from setuppilot.tools.clone import check_github_repo, clone_repo, git_clone, git_options
 from setuppilot.tools.github_url import RepoRef
 from tests.fakes import fake_executable, make_repo
 
 REF = RepoRef("someone", "demo")
 CONFIG = RepoConfig(max_size_mb=1, clone_timeout_seconds=60, max_tree_chars=2000)
+# A fake git that prints the arguments it was given and fails.
+ECHO_ARGS_AND_FAIL = "import sys; sys.stderr.write(' '.join(sys.argv[1:])); sys.exit(1)"
 
 
 def no_check(ref):
@@ -76,7 +78,7 @@ def test_repo_github_does_not_know_is_refused_before_cloning(tmp_path):
 
 
 def test_clone_is_shallow_https_only_and_without_saved_passwords(tmp_path, monkeypatch):
-    fake_executable(tmp_path / "bin", "git", 'echo "$@" >&2; exit 1')
+    fake_executable(tmp_path / "bin", "git", ECHO_ARGS_AND_FAIL)
     monkeypatch.setenv("PATH", str(tmp_path / "bin"))
     with pytest.raises(CloneFailed) as error:
         git_clone("https://github.com/someone/demo.git", tmp_path / "out", CONFIG)
@@ -86,8 +88,24 @@ def test_clone_is_shallow_https_only_and_without_saved_passwords(tmp_path, monke
     assert "-- https://github.com/someone/demo.git" in sent
 
 
+def test_clone_keeps_line_endings_and_allows_long_paths(tmp_path, monkeypatch):
+    fake_executable(tmp_path / "bin", "git", ECHO_ARGS_AND_FAIL)
+    monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+    with pytest.raises(CloneFailed) as error:
+        git_clone("https://github.com/someone/demo.git", tmp_path / "out", CONFIG)
+    assert "core.autocrlf=false" in error.value.details
+    assert "core.longpaths=true" in error.value.details
+
+
+def test_only_windows_checks_out_links_as_plain_files():
+    turned_off = ("-c", "core.symlinks=false")
+    windows, posix = git_options("windows"), git_options("posix")
+    assert turned_off == windows[-2:] and "core.symlinks=false" not in posix
+
+
 def test_failed_git_clone_reports_git_output(tmp_path, monkeypatch):
-    fake_executable(tmp_path / "bin", "git", 'echo "fatal: repository not found" >&2; exit 128')
+    code = "import sys; sys.stderr.write('fatal: repository not found\\n'); sys.exit(128)"
+    fake_executable(tmp_path / "bin", "git", code)
     monkeypatch.setenv("PATH", str(tmp_path / "bin"))
     with pytest.raises(CloneFailed) as error:
         git_clone("https://github.com/someone/demo.git", tmp_path / "out", CONFIG)
@@ -95,7 +113,8 @@ def test_failed_git_clone_reports_git_output(tmp_path, monkeypatch):
 
 
 def test_failed_checkout_does_not_blame_the_url(tmp_path, monkeypatch):
-    fake_executable(tmp_path / "bin", "git", 'case "$*" in *"checkout -q"*) exit 1;; esac')
+    code = "import sys; sys.exit(1 if 'checkout -q' in ' '.join(sys.argv) else 0)"
+    fake_executable(tmp_path / "bin", "git", code)
     monkeypatch.setenv("PATH", str(tmp_path / "bin"))
     with pytest.raises(CloneFailed, match="^git checkout failed. Check that the disk"):
         git_clone("https://github.com/someone/demo.git", tmp_path / "out", CONFIG)
@@ -112,7 +131,7 @@ def test_empty_repo_is_called_empty_not_a_bad_url(tmp_path, monkeypatch):
 
 
 def test_hanging_clone_is_stopped(tmp_path, monkeypatch):
-    fake_executable(tmp_path / "bin", "git", "exec /bin/sleep 10")
+    fake_executable(tmp_path / "bin", "git", "import time; time.sleep(5)")
     monkeypatch.setenv("PATH", str(tmp_path / "bin"))
     config = RepoConfig(max_size_mb=1, clone_timeout_seconds=0.5, max_tree_chars=2000)
     with pytest.raises(CloneFailed, match="longer than"):
@@ -126,7 +145,9 @@ def test_missing_git_is_a_prerequisite_error(tmp_path, monkeypatch):
 
 
 def test_clone_does_not_ask_for_a_password(tmp_path, monkeypatch):
-    fake_executable(tmp_path / "bin", "git", 'echo "prompt=$GIT_TERMINAL_PROMPT" >&2; exit 1')
+    code = "import os, sys; print('prompt=' + os.environ['GIT_TERMINAL_PROMPT'], file=sys.stderr)"
+    code += "; sys.exit(1)"
+    fake_executable(tmp_path / "bin", "git", code)
     monkeypatch.setenv("PATH", str(tmp_path / "bin"))
     with pytest.raises(CloneFailed) as error:
         git_clone("https://github.com/someone/demo.git", tmp_path / "out", CONFIG)

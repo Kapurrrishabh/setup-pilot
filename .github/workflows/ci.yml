@@ -44,9 +44,32 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run mypy
+      # mypy skips code written for other systems, so check the Windows and macOS code too.
+      - run: uv run mypy --platform win32
+      - run: uv run mypy --platform darwin
       - run: uv run pytest --cov --cov-report=term-missing
       # The safety code must stay well tested: fail the build below 90% for it.
       - run: uv run coverage report --include="src/setuppilot/guardrails/*" --fail-under=90
+
+  test-windows:
+    runs-on: windows-latest
+    # PROVISIONAL: not yet timed on Windows; this only stops a hung job.
+    timeout-minutes: 20
+    env:
+      # GitHub runs service containers (Postgres) only on Linux, so the Linux job tests the
+      # database. The tests skip it here because this says so, not because a URL is missing.
+      SETUPPILOT_SKIP_DB_TESTS: "1"
+      # A text file opened without an encoding fails the tests (see filterwarnings).
+      PYTHONWARNDEFAULTENCODING: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run mypy
+      - run: uv run pytest
 
   checks:
     runs-on: ubuntu-latest

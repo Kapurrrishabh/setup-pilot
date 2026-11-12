@@ -1,4 +1,5 @@
 import argparse
+import os
 import sys
 from importlib.metadata import version
 from pathlib import Path
@@ -60,7 +61,11 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    load_dotenv(Path(".env"))
+    # utf-8-sig: Notepad may save .env with a BOM, which would hide the first key's name.
+    load_dotenv(Path(".env"), encoding="utf-8-sig")
+    if sys.platform == "win32":
+        # Otherwise Windows looks for a program in the current folder before PATH.
+        os.environ["NoDefaultCurrentDirectoryInExePath"] = "1"  # noqa: SIM112 - Microsoft's name
     try:
         settings = load_settings(Path("config.yaml"))
         setup_logging(settings.logging)

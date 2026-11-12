@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from setuppilot.guardrails.commands import JAVA_WRAPPERS
 from setuppilot.guardrails.commands import NODE_MANAGERS as _NODE_MANAGERS
 from setuppilot.tools.compose import COMPOSE_NAMES, MAX_READ_BYTES
 from setuppilot.tools.scan import RepoScan
@@ -32,8 +33,6 @@ _LOCKS: dict[Stack, tuple[tuple[str, str], ...]] = {
 }
 _PYTHON_MANIFESTS = ("pyproject.toml", "setup.py", "setup.cfg", "Pipfile")
 _CONDA_FILES = ("environment.yml", "environment.yaml")
-# A repo's own build script for Java; it replaces an installed Maven or Gradle.
-JAVA_WRAPPERS = {"maven": "mvnw", "gradle": "gradlew"}
 _GRADLE_FILES = ("build.gradle.kts", "build.gradle", "settings.gradle.kts", "settings.gradle")
 _TOP_MANIFESTS = (
     "package.json",
@@ -202,15 +201,16 @@ def _rust_hint(top: set[str], reader: "_ManifestReader") -> str | None:
 
 
 def _java(top: set[str]) -> list[StackCandidate]:
+    # Both wrappers count (mvnw and mvnw.cmd): the plan picks the one for the system it runs on.
+    def wrappers(manager: str) -> list[str]:
+        return sorted(top & {names[manager] for names in JAVA_WRAPPERS.values()})
+
     found = []
     if "pom.xml" in top:
-        found.append(
-            StackCandidate("java", "maven", ("pom.xml", *(top & {JAVA_WRAPPERS["maven"]})), None)
-        )
+        found.append(StackCandidate("java", "maven", ("pom.xml", *wrappers("maven")), None))
     gradle = _first_present(top, _GRADLE_FILES)
     if gradle:
-        wrapper = top & {JAVA_WRAPPERS["gradle"]}
-        found.append(StackCandidate("java", "gradle", (gradle, *wrapper), None))
+        found.append(StackCandidate("java", "gradle", (gradle, *wrappers("gradle")), None))
     return found
 
 

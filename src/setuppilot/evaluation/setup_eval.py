@@ -2,14 +2,17 @@
 
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 import yaml
 
 from setuppilot.agent.driver import Finished, SetupAgent, Waiting
 from setuppilot.db.runs import RunStore
+from setuppilot.guardrails.commands import ExecTarget
+from setuppilot.guardrails.docker_mode import exec_target
 from setuppilot.llm.usage import UsageStore
 
 _COLUMNS = ("Repo", "Detected", "Stack right", "Install right", "Verified", "Error",
@@ -21,7 +24,8 @@ class SetupCase:
     url: str
     expected_stack: str
     expected_manager: str
-    expected_install: tuple[str, ...]
+    # Where the layout differs, so do the commands: ./mvnw on Linux, ./mvnw.cmd on Windows.
+    expected_install: Mapping[ExecTarget, tuple[str, ...]]
 
 
 @dataclass(frozen=True)
@@ -38,7 +42,7 @@ class SetupScore:
 
 
 def load_setup_cases(path: Path) -> list[SetupCase]:
-    data = yaml.safe_load(path.read_text())
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
     # The table counts every result but "verified" as a miss, so it cannot score other guesses.
     if others := [r["url"] for r in data["repos"] if r["expected_result"] != "verified"]:
         raise ValueError(
@@ -50,10 +54,22 @@ def load_setup_cases(path: Path) -> list[SetupCase]:
             r["url"],
             r["expected_stack"],
             r["expected_manager"],
-            tuple(r["expected_install"]),
+            _expected_install(r["url"], r["expected_install"], path),
         )  # fmt: skip
         for r in data["repos"]
     ]
+
+
+def _expected_install(url: str, value: Any, path: Path) -> dict[ExecTarget, tuple[str, ...]]:
+    """One list for every system, or {posix: [...], windows: [...]} where they differ."""
+    if isinstance(value, list):
+        return {"posix": tuple(value), "windows": tuple(value)}
+    if not isinstance(value, dict) or set(value) != {"posix", "windows"}:
+        raise ValueError(
+            f"expected_install for {url} must be a list, or posix and windows lists, not "
+            f"{value!r}. Fix it in {path}."
+        )
+    return {"posix": tuple(value["posix"]), "windows": tuple(value["windows"])}
 
 
 def auto_answer(case: SetupCase, question: dict) -> dict:
@@ -69,8 +85,10 @@ def auto_answer(case: SetupCase, question: dict) -> dict:
 
 def run_setup_case(
     case: SetupCase, agent: SetupAgent, runs: RunStore, usage: UsageStore, dest: Path,
-    use_docker: bool, clock: Callable[[], float] = time.monotonic,
+    use_docker: bool, host: ExecTarget, clock: Callable[[], float] = time.monotonic,
 ) -> SetupScore:  # fmt: skip
+    """host: the system the agent runs on, which picks the expected install commands."""
+    target = exec_target(host, use_docker, case.expected_manager)
     started = clock()
     outcome: Waiting | Finished = agent.start(case.url, str(dest), use_docker=use_docker)
     approvals, installs = 0, []
@@ -86,7 +104,7 @@ def run_setup_case(
         url=case.url,
         detected=outcome.stack,
         is_stack_right=outcome.stack == f"{case.expected_stack}/{case.expected_manager}",
-        is_install_right=tuple(installs) == case.expected_install,
+        is_install_right=tuple(installs) == case.expected_install[target],
         is_verified=outcome.is_verified,
         error_type=run.error_type,
         seconds=round(clock() - started, 1),
@@ -126,10 +144,11 @@ def _rate(scores: list[SetupScore], field: str) -> str:
 def load_setup_done(path: Path) -> list[SetupScore]:
     if not path.exists():
         return []
-    return [SetupScore(**json.loads(line)) for line in path.read_text().splitlines() if line]
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return [SetupScore(**json.loads(line)) for line in lines if line]
 
 
 def save_setup_score(path: Path, score: SetupScore) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a") as file:
+    with path.open("a", encoding="utf-8") as file:
         file.write(json.dumps(asdict(score)) + "\n")

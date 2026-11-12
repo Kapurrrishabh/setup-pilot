@@ -17,7 +17,7 @@ Ask = Callable[[str], str]
 
 def make_agent(settings: Settings, stores: Stores) -> SetupAgent:
     # The terminal has no Cancel button (Ctrl+C stops the command), so nothing is tracked.
-    return build_agent(settings, stores, _llm_or_none(settings, stores), on_start=lambda g: None)
+    return build_agent(settings, stores, _llm_or_none(settings, stores), on_start=lambda t: None)
 
 
 def interact(
