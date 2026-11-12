@@ -14,6 +14,8 @@ _SECRET_PATTERNS = (
     re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"),
     # Anything before @ in a URL (user:password, or a token) is a secret.
     re.compile(r"(?<=://)[^/\s]{1,256}(?=@)"),
+    # GitHub's download links for private repos carry a short-lived ?token=.
+    re.compile(r"(?<=[?&]token=)[^&#\s\"']+"),
 )
 # Shorter values are placeholders; hiding them would garble every log line.
 _MIN_SECRET_LENGTH = 8

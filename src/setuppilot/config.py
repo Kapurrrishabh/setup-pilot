@@ -123,6 +123,37 @@ class WebConfig(_Strict):
     posts_per_minute: PositiveInt
 
 
+class GitHubApp(_Strict):
+    """The GitHub App you registered for sign-in. Its Client ID is public, so it can live here."""
+
+    client_id: str = Field(pattern=r"^[A-Za-z0-9.]+$")
+    app_slug: str = Field(pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$", max_length=34)
+
+    @model_validator(mode="after")
+    def _not_the_app_id(self) -> "GitHubApp":
+        if self.client_id.isdigit():
+            raise ValueError(
+                f"github.app.client_id is '{self.client_id}', a number, so it looks like the App "
+                "ID. Copy the Client ID (it starts with Iv) from your GitHub App's page instead."
+            )
+        return self
+
+    @property
+    def install_url(self) -> str:
+        return f"https://github.com/apps/{self.app_slug}/installations/new"
+
+    @property
+    def settings_url(self) -> str:
+        return f"https://github.com/settings/apps/{self.app_slug}"
+
+
+class GitHubConfig(_Strict):
+    # None turns sign-in off. Public repos are still read from GitHub without it.
+    app: GitHubApp | None
+    max_repo_pages: PositiveInt
+    max_tarball_mb: PositiveInt
+
+
 class Settings(_Strict):
     logging: LoggingConfig
     groq: GroqConfig
@@ -133,6 +164,7 @@ class Settings(_Strict):
     agent: AgentConfig
     chat: ChatConfig
     web: WebConfig
+    github: GitHubConfig
 
 
 def load_settings(config_path: Path) -> Settings:

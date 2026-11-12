@@ -101,3 +101,15 @@ web:
   max_request_bytes: 16384
   # PROVISIONAL: stops a stuck page from flooding the server; far above a person clicking.
   posts_per_minute: 120
+
+github:
+  # Sign in with GitHub is off until you register your own GitHub App (see docs/SECURITY.md).
+  # Then use its Client ID (not the App ID) and slug, like this:
+  #   app: {client_id: Iv23liExample, app_slug: setuppilot-yourname}
+  app: null
+  # PROVISIONAL: 10 pages of 100 repos for each place the app is installed. Raise it if your
+  # repo list says it was cut short.
+  max_repo_pages: 10
+  # PROVISIONAL: a repo whose files add up to more is cloned instead of read from GitHub.
+  # Most libraries and apps are far smaller; check it against the repos you really use.
+  max_tarball_mb: 50

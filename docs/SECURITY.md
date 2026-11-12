@@ -57,6 +57,34 @@ the newest code on `main` gets fixes.
   ports open to your whole network) and these are shown before you approve. A compose file whose
   YAML aliases would make it bigger than 1 MB when written out is not read, and says so.
 
+## GitHub sign-in
+
+The parts below are built and tested; the web app's sign-in page is not built yet.
+
+- **Your own GitHub App, read only.** Sign-in uses a GitHub App that you register on your own
+  account, with only Contents: Read-only and Metadata: Read-only, installed on the repos you pick.
+  A shared app would let its owner reach your repos, so none is shipped. Sign-in uses GitHub's
+  device flow, so there is no client secret and no private key. To set it up: at
+  https://github.com/settings/apps/new keep "Expire user authorization tokens" ticked, tick
+  "Enable Device Flow", untick the webhook, give only those two permissions, pick "Only on this
+  account", then put its Client ID (not the App ID) and slug in `config.yaml` under `github.app`.
+  Install it at `https://github.com/apps/<slug>/installations/new` on only the repos you want.
+- **Where the token lives.** In your system keyring (macOS Keychain, Windows Credential Manager,
+  Secret Service or KWallet on Linux), as one entry named `setuppilot`. On Windows, keyring also
+  keeps the entry's previous value as `github@setuppilot`; sign-out removes both. Never in a file,
+  the database, logs, prompts, command environments or the browser. With no system keyring, or
+  one that is locked or fails, it stays in memory only and SetupPilot says so; it never falls back
+  to a file or `keyrings.alt`. On a headless Linux, start one with `dbus-run-session -- sh`, then
+  `gnome-keyring-daemon --unlock`.
+- **Public reads stay public.** Reading a repo you typed in never sends your token. Download links
+  for private repos hold a short-lived key and are never logged; the log file also masks them.
+- **Sign-out** removes the token here first, then asks GitHub to cancel it. If GitHub does not
+  confirm, remove SetupPilot under GitHub Settings > Applications > Authorized GitHub Apps.
+- **What it cannot stop.** On macOS, any script run by the same Python can read the keychain
+  entry without asking, and Windows Credential Manager has no lock per app. So an install script
+  could read the token. It can only read the repos you picked, and lasts 8 hours, but its refresh
+  token lasts 6 months. Use Docker mode for repos you do not trust, and sign out when done.
+
 ## What it cannot stop
 
 - **Install scripts run code.** `npm install`, `pip install`, `cargo build` and friends run code

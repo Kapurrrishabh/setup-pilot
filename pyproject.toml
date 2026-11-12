@@ -23,6 +23,8 @@ classifiers = [
 requires-python = ">=3.12"
 dependencies = [
     "flask>=3.0",
+    "httpx>=0.28",
+    "keyring>=25.7",
     "langgraph>=0.6",
     "langgraph-checkpoint-postgres>=2.0",
     "langsmith>=0.4",
