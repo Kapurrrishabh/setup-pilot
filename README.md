@@ -31,7 +31,7 @@ repo is also risky, because install scripts can run any code.
 ## Out of scope
 
 - Any host other than `https://github.com/<owner>/<repo>`. Private repos only through your own
-  GitHub App (see [Sign in with GitHub](#sign-in-with-github-optional)).
+  GitHub App (see [Sign in with GitHub](#sign-in-with-github)).
 - Writing or fixing code. The chatbot answers questions about the repo only.
 - Paid APIs or other LLM providers.
 - Running any command without your approval.
@@ -86,11 +86,14 @@ More: [security notes](docs/SECURITY.md), [evaluation report](eval/REPORT.md),
 uv run setuppilot web      # then open http://127.0.0.1:5005
 ```
 
-Pages: **Set up a repo** (URL, folder, Docker mode, pre-flight check), the **live run** (a
-progress bar, the approve / reject / edit box with keyboard keys A, R and E, the timeline of
-steps, Cancel, and a clear verified / not verified result with the next step), **Chat**, **Runs**
-(filter by result, search by repo), **Metrics** and **Settings** (tokens used today against the
-budget, requests left per model). It follows your system's light or dark theme, works on narrow
+Pages: **Set up a repo** (paste a URL, or sign in with GitHub and pick from your repos; the folder,
+with a **Browse** button that opens your system's folder window; Docker mode; the pre-flight
+check), the **live run** (what the AI found in the repo, a progress bar, the approve / reject /
+edit box with keys A, R and E, missing tools with Install / I installed it / Stop (keys I, C, S),
+fixes you must do by hand (D, S), the timeline with each fix attempt, Cancel, and the result: checked
+by SetupPilot, checked only by the AI's checks, or not verified, with the next step), **Chat**,
+**Runs** (filter by result, search by repo), **Metrics** and **Settings** (tokens used today
+against the budget, requests left per model, GitHub sign-in). It follows your system's light or dark theme, works on narrow
 windows, works with the keyboard only, and announces new steps and questions to screen readers
 (checked with axe; not yet tried with a real screen reader).
 
@@ -222,7 +225,7 @@ colima start
   with "operation not permitted". Use a folder like `~/work`.
 - Stop it with `colima stop` when you are done.
 
-## Sign in with GitHub (optional)
+## Sign in with GitHub
 
 Without signing in, SetupPilot works with any public repo URL. Sign in to pick from your own
 repos, private ones included. SetupPilot ships no shared GitHub App, because whoever owns such an
@@ -396,7 +399,7 @@ App or another machine:
 | Real Groq calls: `ask`, the AI's plan, fixes and report in a run, tokens per run (the setup table's Tokens column; `setuppilot show <run id>` lists each call) | tried on a few repos only | `.\test.ps1 groq setup` |
 | The 18-repo setup evaluation with the AI on, and again with `agent.use_ai_planning: false`, on Windows and Linux | not run with v2 yet | `.\test.ps1 setup`, twice |
 | Chatbot full answers and "I don't know" (74 questions, target 80%+ grounded) | not run with a key yet | `.\test.ps1 chat` |
-| GitHub sign-in: sign in, list your repos, read a private repo, set up one private repo (this also checks that GitHub takes the sign-in as a git password) | needs your own GitHub App | the steps in [Sign in with GitHub](#sign-in-with-github-optional), then set up a private repo |
+| GitHub sign-in: sign in, list your repos, read a private repo, set up one private repo (this also checks that GitHub takes the sign-in as a git password) | needs your own GitHub App | the steps in [Sign in with GitHub](#sign-in-with-github), then set up a private repo |
 | Windows: installing a missing tool with winget, then Check again finding it | the Windows CI job does not install anything | on Windows without Node, set up `https://github.com/JedWatson/classnames` |
 | Real Supabase: tables, row level security, pause and resume across a restart, cached replay | no Supabase project yet | `.\test.ps1 supabase chat` |
 | Windows: Cancel and the time limit stopping every process, `.cmd` tools like npm, Docker Desktop | written from the Windows docs; only the Windows CI job tests it | `.\test.ps1 setup docker browser`, then run a setup and press Cancel while it installs |

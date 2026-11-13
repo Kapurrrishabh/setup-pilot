@@ -51,6 +51,12 @@ def can_symlink(tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def keep_path(monkeypatch):
+    """On Windows the agent adds saved registry PATH entries; tests must not leak them."""
+    monkeypatch.setenv("PATH", os.environ["PATH"])
+
+
+@pytest.fixture(autouse=True)
 def restore_logging():
     """Tests that call setup_logging (directly or through the CLI) must not leak handlers."""
     root = logging.getLogger()

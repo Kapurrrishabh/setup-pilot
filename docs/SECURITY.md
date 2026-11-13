@@ -96,6 +96,12 @@ the newest code on `main` gets fixes.
   It refuses requests whose Host or Origin is not this app, needs a page token on every change,
   limits request size and rate, and sends strict security headers. Repo text is always shown as
   plain text, never as HTML.
+- **The Browse button.** A browser cannot tell the app a folder's full path, so the app itself opens
+  your system's folder window in a separate program: osascript on macOS, tkinter or PowerShell on
+  Windows, zenity, kdialog or tkinter on Linux. That program and its script are fixed and found by
+  full path; the start folder goes in only as a plain argument or variable. Only one window can be
+  open at a time, the request needs the page token like every change, and the picked folder must
+  pass a real write test. Over SSH, or with no screen, there is no Browse button; type the path.
 - **Database.** Only the app talks to Supabase, as the table owner. Row level security is on for
   every table, with no policies, so Supabase's public API keys can read nothing.
 - **Docker Compose warnings.** Compose files are checked for settings that give a container power

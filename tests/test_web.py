@@ -1181,7 +1181,7 @@ def test_the_run_view_carries_the_analysis_the_run_page_draws(tmp_path):
     view = wait_for(web, run_id, lambda v: v["question"])
     (analyze,) = [s for s in view["steps"] if s["name"] == "analyze"]
     assert analyze["arguments"]["summary"] == "A demo app."
-    option = {"id": "python/pip", "source": "both", "is_runnable": True}
+    option = {"id": "python/pip", "source": "both", "is_runnable": True, "note": None}
     assert option in analyze["arguments"]["options"]
 
 

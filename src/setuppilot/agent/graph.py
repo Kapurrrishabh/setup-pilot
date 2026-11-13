@@ -358,8 +358,10 @@ def _analyze(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
     arguments = {
         "summary": analysis.summary if analysis else None,
         "options": [
-            {"id": o.id, "source": o.source, "is_runnable": o.is_runnable} for o in options
+            {"id": o.id, "source": o.source, "is_runnable": o.is_runnable, "note": o.note}
+            for o in options
         ],
+        "notes": notes,
     }
     tool = "llm" if note.model else None
     return update, StepNote(summary, tool, arguments, None, note.tokens, note.model)
@@ -447,7 +449,9 @@ def _prerequisites(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
     summary = (
         f"Missing tools: {', '.join(missing)}." if missing else "All needed tools are installed."
     )
-    return {"prereqs": prereqs}, StepNote(summary)
+    # Saved in the step too, so the run page can still show each way's tools after a refresh.
+    tools = {o.id: prereqs[o.id] for o in options}
+    return {"prereqs": prereqs}, StepNote(summary, None, {"tools": tools})
 
 
 def _needs(deps: AgentDeps, state: RunState, option: PlanOption) -> list[ToolNeed]:
@@ -684,7 +688,7 @@ def _plan(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
     summary = f"{_count(pending, 'command')} to approve"
     summary += f"; {_count(blocked, 'AI command')} not allowed" * bool(blocked)
     summary += f"; the AI lists {_count(manual, 'manual step')}." if manual else "."
-    return update, StepNote(summary)
+    return update, StepNote(summary, None, {"start_command": update["start_command"]})
 
 
 def _approve(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:

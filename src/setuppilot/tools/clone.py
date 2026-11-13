@@ -54,7 +54,8 @@ _SUBDIR_CHARS = 200
 SIGN_IN_OFF = (
     "Sign in with GitHub is off.",
     "To turn it on, register your own GitHub App, put its Client ID and slug in config.yaml "
-    "under github.app, and restart SetupPilot. docs/SECURITY.md has the steps.",
+    "under github.app, and restart SetupPilot. The README section Sign in with GitHub has the "
+    "steps.",
 )
 
 

@@ -179,6 +179,12 @@ def create_app(services: WebServices) -> Flask:
         folder = Path(typed).expanduser().resolve()
         if not folder.is_dir():
             raise BadInput("That folder does not exist.", details=f"Create {folder} first.")
+        # os.access says yes for every folder on Windows, so try to write a file instead.
+        if not is_writable_folder(folder):
+            raise BadInput(
+                "SetupPilot cannot write in that folder.",
+                details=f"Pick a folder in your own user folder, not {folder}.",
+            )
         use_docker = body.get("use_docker") is True
         run_id = services.runs.start(url, str(folder), use_docker, owner, _subdir(body))
         return jsonify(run_id=run_id)

@@ -115,7 +115,7 @@ web:
   posts_per_minute: 120
 
 github:
-  # Sign in with GitHub is off until you register your own GitHub App (see docs/SECURITY.md).
+  # Sign in with GitHub is off until you register your own GitHub App (README: Sign in with GitHub).
   # Then use its Client ID (not the App ID) and slug, like this:
   #   app: {client_id: Iv23liExample, app_slug: setuppilot-yourname}
   app: null
