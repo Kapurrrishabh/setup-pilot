@@ -503,3 +503,18 @@ def test_groq_is_not_given_an_enum_for_open_ended_names():
 
     text = json.dumps(ANALYSIS_FORMAT.schema)
     assert '"mvn"' not in text and '"kafka"' not in text and '"typescript"' not in text
+
+
+def test_a_name_already_right_for_its_field_is_kept_not_mapped_away():
+    from pydantic import TypeAdapter
+
+    from setuppilot.analysis.schema import LanguageName, ManagerName
+
+    managers = TypeAdapter(ManagerName)
+    assert [managers.validate_python(m) for m in ("maven", "bundler", "compose")] == [
+        "maven",
+        "bundler",
+        "compose",
+    ]
+    assert TypeAdapter(LanguageName).validate_python("rust") == "rust"
+    assert managers.validate_python("mvn") == "maven"

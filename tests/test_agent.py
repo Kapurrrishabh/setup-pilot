@@ -1342,3 +1342,46 @@ def test_a_run_that_stays_inside_every_limit_reaches_its_verdict(tmp_path):
     assert outcome.error is None and outcome.is_verified
     assert sum(t.startswith(winget) for t in runner.texts) == limits.max_install_rounds
     assert all(f in runner.texts for f in fixes[:fix_count] + extras + checks)
+
+
+_PRIVILEGED_COMPOSE = {
+    "docker-compose.yml": "services:\n  web:\n    image: nginx\n    privileged: true\n",
+    "README.md": "# x\n",
+}
+
+
+def test_compose_warning_is_on_the_command_that_starts_the_containers(tmp_path):
+    from tests.fakes import ai_project, ai_step, analysis_reply
+
+    prepare = ai_step("git submodule update --init", phase="prepare")
+    project = ai_project(
+        manager="compose", languages=["other"], evidence=["docker-compose.yml"], steps=[prepare]
+    )
+    llm = make_client(FakeTransport(analysis_reply(project), reply("Report.")))
+    agent, _ = make_agent(tmp_path, _PRIVILEGED_COMPOSE, llm=llm)
+    first = start(agent, tmp_path)
+    second = agent.answer(first.run_id, first.question_id, {"action": "approve"})
+    assert (
+        "git submodule" in first.question["command"] and "Careful" not in first.question["reason"]
+    )
+    assert "compose" in second.question["command"] and "privileged" in second.question["reason"]
+
+
+class _OnlyUv:
+    def run(self, command):
+        from setuppilot.tools.prereqs import TOOLS, Probe
+
+        is_uv = command == TOOLS["uv"].version_command
+        return Probe(is_uv, "uv 0.9.2" if is_uv else "")
+
+
+def test_a_tool_the_ai_calls_required_does_not_block_setuppilots_own_plan(tmp_path):
+    from tests.fakes import ai_project, analysis_reply
+
+    docker = {"tool": "docker", "name": "Docker", "is_required": True, "version": None,
+              "reason": "the README runs postgres in docker"}  # fmt: skip
+    project = ai_project(manager="pip", tools=[docker])
+    llm = make_client(FakeTransport(analysis_reply(project), reply("Report.")))
+    agent, _ = make_agent(tmp_path, PIP_REPO, llm=llm, probe=_OnlyUv())
+    first = start(agent, tmp_path)
+    assert first.question["kind"] == "approve_command"

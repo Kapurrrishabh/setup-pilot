@@ -392,9 +392,13 @@ function renderOutcome(v, previous) {
   setBadge($("verification-badge"), labels.verification[level], VERIFICATION_TONES[level]);
   $("verification-text").textContent = VERIFICATION_TEXTS[level];
   $("outcome-verification").hidden = outcome === "cancelled";
-  const start = stepArguments(v, "plan")?.start_command;
+  const plan = stepArguments(v, "plan");
+  const start = plan?.start_command;
   $("start-command").textContent = start ?? "";
-  $("start-where").textContent = v.repo_dir ?? "";
+  // A sub-project's start command runs in its own folder, not at the repo's top.
+  const slash = (v.repo_dir ?? "").includes("\\") ? "\\" : "/";
+  const inProject = plan?.project && plan.project !== "." ? `${slash}${plan.project.split("/").join(slash)}` : "";
+  $("start-where").textContent = v.repo_dir ? v.repo_dir + inProject : "";
   $("start-hint").hidden = !start || outcome === "cancelled" || v.repo_dir === null;
   // A second run into the same folder stops at once, because the repo's folder is already there.
   $("outcome-retry").replaceChildren("The repo's files are still in ", element("code", v.repo_dir), ". To try again, delete only that folder, or pick a different folder on the setup page.");

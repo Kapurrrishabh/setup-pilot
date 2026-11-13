@@ -45,7 +45,8 @@ def _pick_from(names: Any, synonyms: dict[str, str]) -> Callable[[Any], Any]:
         if not isinstance(value, str):
             return value
         name = value.strip().lower()
-        name = synonyms.get(name, name)
+        # A name already on this field's list wins: "maven" is a manager here, not the tool mvn.
+        name = name if name in known else synonyms.get(name, name)
         return name if name in known else "other"
 
     return pick

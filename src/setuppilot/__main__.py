@@ -131,6 +131,11 @@ def set_up_repo(settings: Settings, args: argparse.Namespace) -> bool:
     outcome: Waiting | Stopped | Finished
     if args.command == "run":
         dest = resolve_destination(args.dest)
+        if args.docker and args.subdir:
+            raise SetupPilotError(
+                "Docker mode cannot set up a project in a sub-folder yet.",
+                details="Leave out --docker, or set up the whole repo.",
+            )
         outcome = agent.start(args.repo_url, dest, args.docker, None, args.subdir)
     else:
         if stores.runs.get_run(args.run_id).status == "cancelled":

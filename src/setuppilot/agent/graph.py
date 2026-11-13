@@ -7,7 +7,7 @@ import logging
 import tempfile
 import time
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, TypedDict, cast, get_args
 
@@ -462,7 +462,11 @@ def _needs(deps: AgentDeps, state: RunState, option: PlanOption) -> list[ToolNee
     files = needs_for(_candidate(option), target)
     project = ai_project(_analysis(state), option)
     ai = _ai_needs(project) if project else []
-    if project and not uses_own_plan(option):
+    if uses_own_plan(option):
+        # SetupPilot's own plan decides what runs, so the AI's tool list is only advice: its
+        # guess (which README text can sway) must not block a setup that would work.
+        ai = [replace(need, is_required=False) for need in ai]
+    elif project:
         # No hand-written plan says what runs, so the AI's own commands do.
         steps = runnable_steps(project.steps)
         ai += [need for s in steps for need in needs_for_command(s.command, target)]
@@ -661,6 +665,12 @@ def _plan(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
         installs = install_plan(candidate, top, is_installable_project(guard.workspace), target)
         checks = code_checks(candidate, scan.files, target)
         quiet = (QUIET_COMMANDS[option.manager],) if option.manager in QUIET_COMMANDS else ()
+        if option.manager == "compose":
+            # On SetupPilot's own `up` command, before the merge: AI prepare steps go first.
+            (compose,) = find_compose_files(guard.workspace, (option.evidence[0],))
+            if compose.warnings:
+                careful = " Careful: " + " ".join(compose.warnings)
+                installs[0] = replace(installs[0], reason=installs[0].reason + careful)
     project = ai_project(_analysis(state), option)
     merged = merge_plan(
         installs,
@@ -671,10 +681,6 @@ def _plan(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
         lambda text: command_verb(text, target),
     )
     plan = merged.items
-    if option.manager == "compose" and uses_own_plan(option):
-        (compose,) = find_compose_files(guard.workspace, (option.evidence[0],))
-        if compose.warnings:
-            plan[0]["reason"] += " Careful: " + " ".join(compose.warnings)
     update = {
         "plan": plan,
         "manual_steps": merged.manual_steps,
@@ -688,7 +694,8 @@ def _plan(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
     summary = f"{_count(pending, 'command')} to approve"
     summary += f"; {_count(blocked, 'AI command')} not allowed" * bool(blocked)
     summary += f"; the AI lists {_count(manual, 'manual step')}." if manual else "."
-    return update, StepNote(summary, None, {"start_command": update["start_command"]})
+    arguments = {"start_command": update["start_command"], "project": option.project}
+    return update, StepNote(summary, None, arguments)
 
 
 def _approve(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
@@ -879,6 +886,9 @@ def _diagnose(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
     # The AI may be wrong about what is missing, so the probe has the last word.
     claimed = [ToolNeed(t, True, None, "") for t in decision.missing_tools]
     still_missing = [c.tool for c in check_tools(claimed, deps.probe) if not c.is_installed]
+    if state.get("use_docker") and not _runs_on_host(state):
+        # The probe looks at this machine, not the image, so it cannot tell what is missing there.
+        still_missing = []
     root = _root(plan, index)
     plan[root]["fix_rounds"] = plan[root].get("fix_rounds", 0) + 1
     guess = {"category": diagnosis.category, "explanation": diagnosis.explanation[:300]}
@@ -1226,7 +1236,15 @@ def _root(plan: list[dict], index: int) -> int:
 def _missing_required(state: RunState) -> bool:
     if not state.get("chosen"):
         return False
-    return any(_is_blocking(c) for c in state.get("prereqs", {}).get(_option(state).id, []))
+    checks = state.get("prereqs", {}).get(_option(state).id, [])
+    if (
+        state.get("use_docker")
+        and not _runs_on_host(state)
+        and not any("is_blocking" in c for c in checks)
+    ):
+        # Docker-mode runs saved before v2 kept this machine's checks, which the image ignores.
+        return False
+    return any(_is_blocking(c) for c in checks)
 
 
 def _is_optional(item: dict) -> bool:

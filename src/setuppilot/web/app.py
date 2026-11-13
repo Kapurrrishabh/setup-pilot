@@ -186,7 +186,13 @@ def create_app(services: WebServices) -> Flask:
                 details=f"Pick a folder in your own user folder, not {folder}.",
             )
         use_docker = body.get("use_docker") is True
-        run_id = services.runs.start(url, str(folder), use_docker, owner, _subdir(body))
+        subdir = _subdir(body)
+        if use_docker and subdir:
+            raise BadInput(
+                "Docker mode cannot set up a project in a sub-folder yet.",
+                details="Turn Docker mode off, or set up the whole repo.",
+            )
+        run_id = services.runs.start(url, str(folder), use_docker, owner, subdir)
         return jsonify(run_id=run_id)
 
     @app.get("/runs/<run_id>")
