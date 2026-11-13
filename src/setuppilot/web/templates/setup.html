@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import repo_picker %}
 {% block title %}Set up a repo · {% endblock %}
 {% block content %}
 <div class="page-head">
@@ -7,15 +8,15 @@
 </div>
 <div class="split">
   <form id="setup-form" class="card">
-    <div class="field">
-      <label for="repo-url">Public GitHub URL</label>
-      <input id="repo-url" name="repo_url" required maxlength="300" placeholder="https://github.com/owner/repo" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="repo-url-hint">
-      <p id="repo-url-hint" class="hint">Only public repos on github.com, like https://github.com/pypa/sampleproject.</p>
-    </div>
+    {{ repo_picker("Like https://github.com/pypa/sampleproject.", "h2") }}
     <div class="field">
       <label for="dest-dir">Folder to put the repo in</label>
-      <input id="dest-dir" name="dest_dir" required maxlength="500" placeholder="~/work" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="dest-dir-hint">
-      <p id="dest-dir-hint" class="hint">It must already exist. SetupPilot makes a new folder named after the repo inside it. You can type ~ for your home folder.</p>
+      <div class="row">
+        <input id="dest-dir" name="dest_dir" required maxlength="500" placeholder="{{ folder_example }}" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="dest-dir-hint pick-note">
+        {% if not folder_problem %}<button type="button" id="browse" class="secondary">Browse…</button>{% endif %}
+      </div>
+      <p id="dest-dir-hint" class="hint">It must already exist. SetupPilot makes a new folder named after the repo inside it. You can type ~ for your home folder.{% if folder_problem %} There is no Browse button here ({{ folder_problem }}), so type the full path.{% endif %}</p>
+      <p id="pick-note" class="hint" role="status"></p>
     </div>
     <div class="field">
       <label class="check-row">
@@ -23,7 +24,7 @@
         <span>Install inside a Docker container</span>
       </label>
       <p id="docker-hint" class="hint indent">Safer for repos you do not fully trust. It is not a full sandbox here, because a container can reach this app. For a repo you do not trust at all, close this app and run <code>setuppilot run &lt;url&gt; &lt;folder&gt; --docker</code> in a terminal.</p>
-      <p id="docker-problem" class="callout bad" hidden>Docker is not running. Start Docker Desktop or run <code>colima start</code>, then press Check again.</p>
+      <p id="docker-problem" class="callout bad" hidden></p>
     </div>
     <div class="callout warn">
       <div>
@@ -45,4 +46,5 @@
   </section>
 </div>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', filename='setup.js') }}"></script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='github.js') }}"></script>
+<script src="{{ url_for('static', filename='setup.js') }}"></script>{% endblock %}

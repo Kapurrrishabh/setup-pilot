@@ -16,6 +16,7 @@ from setuppilot.llm.groq import build_llm_client
 from setuppilot.tools.clone import GitHubAccess, SignedIn, github_http
 from setuppilot.tools.prereqs import SystemToolProbe
 from setuppilot.web.app import WebServices, create_app
+from setuppilot.web.folder_picker import WINDOW_SECONDS, pick_folder, this_computers_picker
 from setuppilot.web.preflight import run_preflight, windows_facts
 from setuppilot.web.runs import CommandTracker, RunManager
 
@@ -55,6 +56,8 @@ def build_services(settings: Settings) -> WebServices:
         llm_problem=llm_problem,
         preflight=lambda folder: run_preflight(stores, SystemToolProbe(), folder, windows_facts()),
         github=github,
+        folder_picker=this_computers_picker(),
+        pick_folder=lambda picker, start: pick_folder(picker, start, WINDOW_SECONDS),
     )
 
 

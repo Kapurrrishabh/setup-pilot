@@ -1,19 +1,17 @@
 {% extends "base.html" %}
+{% from "_macros.html" import repo_picker %}
 {% block title %}Chat · {% endblock %}
 {% block content %}
 <div class="page-head">
   <h1>Ask about a repo</h1>
-  <p class="lead">General questions only: what it does, its layout, how to set it up, its license, how to contribute. Answers come only from the repo's own files.</p>
+  <p class="lead">Ask what it does, how it is laid out, how to set it up and run it, or how a part of its code works. Answers come only from the repo's own files, with the lines they came from.</p>
 </div>
 <section class="card" aria-labelledby="index-title">
   <h2 id="index-title"><span class="step-number" aria-hidden="true">1</span>Add a repo</h2>
   <form id="index-form">
-    <label for="index-url">Public GitHub URL</label>
-    <div class="row">
-      <input id="index-url" name="repo_url" required maxlength="300" placeholder="https://github.com/owner/repo" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="index-hint">
-      <button type="submit">Index this repo</button>
-    </div>
-    <p id="index-hint" class="hint">SetupPilot downloads the repo once and reads its docs and config files. The first time can take a minute.</p>
+    {{ repo_picker("", "h3") }}
+    <div class="form-actions"><button type="submit" id="index-button">Index this repo</button></div>
+    <p id="index-hint" class="hint">SetupPilot reads the repo's docs, config and code files once. The first time can take a minute.</p>
   </form>
   <p id="index-error" class="callout bad" role="alert" hidden></p>
 </section>
@@ -29,14 +27,15 @@
   {% endif %}
   <div class="field">
     <label for="repo">Repo</label>
+    {# Private repos are added by chat.js, which can send the binding key. #}
     <select id="repo">
-      {% for repo in repos %}<option>{{ repo }}</option>{% else %}<option value="">Add a repo first</option>{% endfor %}
+      {% for repo in repos %}<option value="{{ repo }}">{{ repo }}</option>{% else %}<option value="">Add a repo first</option>{% endfor %}
     </select>
   </div>
   <div id="messages" class="messages" role="log" aria-label="Chat messages" tabindex="0"></div>
   <div id="examples" class="examples" role="group" aria-label="Example questions">
     <span class="examples-label">Try one:</span>
-    {% for example in ["What does this repo do?", "How do I run it?", "What license does it use?", "How can I contribute?"] %}
+    {% for example in ["What does this repo do?", "How do I run it?", "How do I run the tests?", "Where does the program start?", "What license does it use?"] %}
       <button type="button" class="suggestion"{% if llm_problem %} disabled{% endif %}>{{ example }}</button>
     {% endfor %}
   </div>
@@ -45,12 +44,14 @@
       <legend class="visually-hidden">Ask a question</legend>
       <label for="ask-question">Your question</label>
       <div class="row">
-        <input id="ask-question" name="question" required maxlength="1000" placeholder="What does this repo do?" autocomplete="off">
+        <input id="ask-question" name="question" required maxlength="1000" placeholder="What does this repo do?" autocomplete="off" aria-describedby="ask-hint">
         <button type="submit">Ask</button>
       </div>
+      <p id="ask-hint" class="hint">Follow-up questions work: after an answer, ask something like "and how do I test it?".</p>
     </fieldset>
   </form>
   <p class="muted chat-foot">Tokens used in this chat: <span id="tokens">0</span></p>
 </section>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', filename='chat.js') }}"></script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='github.js') }}"></script>
+<script src="{{ url_for('static', filename='chat.js') }}"></script>{% endblock %}

@@ -38,6 +38,8 @@
   <dl class="facts">
     <dt>Database</dt>
     <dd>{% if database_warning %}<span class="badge" data-tone="warn">Not connected</span> Runs are kept in memory and are lost when the app stops.{% else %}<span class="badge" data-tone="ok">Connected</span> Runs are saved and survive a restart.{% endif %}</dd>
+    <dt>GitHub sign-in</dt>
+    <dd>{% if github_sign_in.turn_on %}<span class="badge" data-tone="neutral">Off</span> {{ github_sign_in.turn_on }} <a href="{{ github_help_url }}" rel="noreferrer">How to register your own GitHub App</a>{% else %}<span class="badge" data-tone="ok">On</span> Sign in and out on the <a href="{{ url_for('setup_page') }}">Set up a repo</a> page. <a href="{{ github_sign_in.install_url }}" rel="noreferrer">Choose which repos SetupPilot can read</a>{% if github_sign_in.notice %} <span class="badge" data-tone="warn">Memory only</span> {{ github_sign_in.notice }}{% endif %}{% endif %}</dd>
     <dt>LangSmith tracing</dt>
     <dd>{% if is_tracing_on %}<span class="badge" data-tone="ok">On</span> Traces go to LangSmith.{% else %}<span class="badge" data-tone="neutral">Off</span> Set LANGSMITH_TRACING=true in .env to turn it on.{% endif %}</dd>
   </dl>

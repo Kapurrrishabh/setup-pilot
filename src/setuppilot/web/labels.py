@@ -56,6 +56,14 @@ VERIFICATION_LABELS = {
     "ai_only": AI_ONLY_TEXT,
     "none": "Not checked",
 }
+# Where a way to set up the repo came from.
+SOURCE_LABELS = {
+    "both": "The files and the AI agree",
+    "files": "Found in the files",
+    "ai": "From the AI only",
+}
+VISIBILITY_LABELS = {"public": "Public", "private": "Private", "internal": "Internal"}
+GITHUB_HELP_URL = "https://github.com/Kapurrrishabh/setup-pilot#sign-in-with-github"
 FIRST_ACTIVITY = "Downloading the repo"
 
 ERROR_LABELS = {
@@ -85,6 +93,8 @@ PAGE_LABELS = {
     # The page shows only the buttons the run takes for its question.
     "answers": ANSWERS_BY_KIND,
     "verification": VERIFICATION_LABELS,
+    "sources": SOURCE_LABELS,
+    "visibility": VISIBILITY_LABELS,
     "first_activity": FIRST_ACTIVITY,
     "errors": ERROR_LABELS,
 }

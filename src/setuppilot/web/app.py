@@ -2,6 +2,7 @@
 
 import json
 import secrets
+import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, replace
@@ -23,8 +24,9 @@ from setuppilot.db.stores import Stores
 from setuppilot.errors import NotFound, SetupPilotError
 from setuppilot.guardrails.commands import INSTALL_SCRIPT_WARNING, MAX_COMMAND_CHARS
 from setuppilot.llm.groq import is_tracing_on
-from setuppilot.tools.clone import GitHubAccess, RepoAccess
+from setuppilot.tools.clone import SIGN_IN_OFF, GitHubAccess, RepoAccess
 from setuppilot.tools.github_url import parse_github_url
+from setuppilot.web.folder_picker import Cancelled, FolderPicker, NoFolderWindow, Picked
 from setuppilot.web.github_auth import (
     add_github_routes,
     bound_user_id,
@@ -32,11 +34,20 @@ from setuppilot.web.github_auth import (
     require_user_id,
     sent_key,
 )
-from setuppilot.web.labels import PAGE_LABELS, STATUS_LABELS, duration_text, error_label, repo_name
+from setuppilot.web.labels import (
+    GITHUB_HELP_URL,
+    PAGE_LABELS,
+    STATUS_LABELS,
+    duration_text,
+    error_label,
+    repo_name,
+)
+from setuppilot.web.preflight import is_writable_folder
 from setuppilot.web.runs import RunManager
 from setuppilot.web.security import protect
 
 _EVENT_SECONDS = 1.0
+_MAX_FOLDER_CHARS = 500
 _PING_SECONDS = 15.0
 
 
@@ -51,6 +62,9 @@ class WebServices:
     llm_problem: str | None
     preflight: Callable[[str], list[dict[str, Any]]]
     github: GitHubAccess
+    # The Browse button's folder window, or why this computer has none.
+    folder_picker: FolderPicker | NoFolderWindow
+    pick_folder: Callable[[FolderPicker, Path], Picked | Cancelled]
 
 
 class BadInput(SetupPilotError):
@@ -63,7 +77,9 @@ def create_app(services: WebServices) -> Flask:
     chats: dict[tuple[str, str, int | None], ChatSession] = {}
     stores, settings, github = services.stores, services.settings, services.github
     add_github_routes(app, github, settings.github.max_repo_pages)
-    app.jinja_env.globals["page_labels"] = PAGE_LABELS
+    app.jinja_env.globals |= {"page_labels": PAGE_LABELS, "github_help_url": GITHUB_HELP_URL}
+    # One folder window at a time: a second one would open behind the first.
+    window_open = threading.Lock()
     app.jinja_env.filters |= {
         "status_label": lambda status: STATUS_LABELS[status],
         "error_label": error_label,
@@ -113,7 +129,42 @@ def create_app(services: WebServices) -> Flask:
 
     @app.get("/")
     def setup_page():
-        return page("setup.html", warning=INSTALL_SCRIPT_WARNING)
+        picker = services.folder_picker
+        return page(
+            "setup.html",
+            warning=INSTALL_SCRIPT_WARNING,
+            folder_problem=picker.problem if isinstance(picker, NoFolderWindow) else None,
+            folder_example=str(Path.home() / "work"),
+        )
+
+    @app.post("/api/pick-folder")
+    def pick_folder():
+        body = _json_body()
+        picker = services.folder_picker
+        if isinstance(picker, NoFolderWindow):
+            raise BadInput(
+                "This computer cannot open a folder window.",
+                details=f"{picker.problem}. Type the folder's full path instead.",
+            )
+        start = _start_folder(body)
+        if not window_open.acquire(blocking=False):
+            message = "A folder window is already open."
+            details = "Pick a folder in it, or close it. It may be behind this browser window."
+            return jsonify(error={"message": message, "details": details}), 409
+        try:
+            result = services.pick_folder(picker, start)
+        finally:
+            window_open.release()
+        if isinstance(result, Cancelled):
+            return jsonify(status="cancelled", reason=result.reason)
+        folder = result.path.expanduser().resolve()
+        if not is_writable_folder(folder):
+            raise BadInput(
+                "SetupPilot cannot use that folder.",
+                details=f"It could not write a test file in {folder}. Pick a folder of your "
+                f"own, like {Path.home() / 'work'}.",
+            )
+        return jsonify(status="picked", path=str(folder), picker=picker.name)
 
     @app.get("/api/preflight")
     def preflight():
@@ -124,7 +175,8 @@ def create_app(services: WebServices) -> Flask:
         body = _json_body()
         owner = require_user_id(github) if _access(body) == "github" else None
         url = parse_github_url(_text(body, "repo_url", 300, "the GitHub URL")).url
-        folder = Path(_text(body, "dest_dir", 500, "the folder")).expanduser().resolve()
+        typed = _text(body, "dest_dir", _MAX_FOLDER_CHARS, "the folder")
+        folder = Path(typed).expanduser().resolve()
         if not folder.is_dir():
             raise BadInput("That folder does not exist.", details=f"Create {folder} first.")
         use_docker = body.get("use_docker") is True
@@ -211,6 +263,7 @@ def create_app(services: WebServices) -> Flask:
                     "status": services.runs.shown_status(row.run),
                     "created_at": row.run.created_at.isoformat(),
                     "seconds": row.seconds,
+                    "took": None if row.seconds is None else duration_text(row.seconds),
                     "tokens": row.tokens,
                     "error_type": row.run.error_type,
                     "message": row.run.message,
@@ -243,6 +296,7 @@ def create_app(services: WebServices) -> Flask:
             models=models,
             llm_problem=services.llm_problem,
             is_tracing_on=is_tracing_on(),
+            github_sign_in=_sign_in_facts(github),
         )
 
     @app.get("/chat")
@@ -254,7 +308,9 @@ def create_app(services: WebServices) -> Flask:
     @app.get("/api/chat/repos")
     def chat_repos():
         viewer = bound_user_id(github, sent_key())
-        return jsonify(repos=stores.chat_index.repos(viewer_github_id=viewer))
+        visible = stores.chat_index.repos(viewer_github_id=viewer)
+        public = set(stores.chat_index.repos(viewer_github_id=None))
+        return jsonify(repos=visible, private=[repo for repo in visible if repo not in public])
 
     @app.post("/api/chat/index")
     def index_repo_for_chat():
@@ -309,6 +365,26 @@ def _access(body: dict[str, Any]) -> RepoAccess:
             details=f"access must be 'public' or 'github', not {access!r}.",
         )
     return access
+
+
+def _start_folder(body: dict[str, Any]) -> Path:
+    """Where the folder window opens: the folder already typed in, else the home folder."""
+    typed = body.get("start", "")
+    if not isinstance(typed, str) or len(typed) > _MAX_FOLDER_CHARS:
+        raise BadInput(
+            "The folder must be text.", details=f"Use at most {_MAX_FOLDER_CHARS} characters."
+        )
+    folder = Path(typed.strip() or "~").expanduser()
+    return (folder if folder.is_dir() else Path.home()).resolve()
+
+
+def _sign_in_facts(github: GitHubAccess) -> dict[str, str | None]:
+    """For the Settings page. Never the login name: a page load cannot send the binding key."""
+    signed_in = github.signed_in
+    if signed_in is None:
+        return {"turn_on": " ".join(SIGN_IN_OFF), "install_url": None, "notice": None}
+    install_url, notice = signed_in.app.install_url, signed_in.vault.notice
+    return {"turn_on": None, "install_url": install_url, "notice": notice}
 
 
 def _subdir(body: dict[str, Any]) -> str | None:

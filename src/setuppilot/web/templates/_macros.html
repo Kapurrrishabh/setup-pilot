@@ -2,3 +2,69 @@
 {% macro when(moment) -%}
 <time datetime="{{ moment.isoformat(timespec='seconds') }}">{{ moment.strftime('%Y-%m-%d %H:%M') }} UTC</time>
 {%- endmacro %}
+
+{# Paste a URL, or pick one of your repos through the GitHub sign-in. github.js runs it. #}
+{# heading: the level that fits under the page's own headings. #}
+{% macro repo_picker(url_hint, heading) -%}
+<fieldset id="repo-picker" class="field">
+  <legend>Which repo?</legend>
+  <div class="filters source-switch">
+    <label class="filter"><input type="radio" name="repo_source" value="url" class="visually-hidden" checked> Paste a URL</label>
+    <label class="filter"><input type="radio" name="repo_source" value="github" class="visually-hidden"> My GitHub repos</label>
+  </div>
+  <div id="source-url">
+    <label for="repo-url">Public GitHub URL</label>
+    <input id="repo-url" name="repo_url" maxlength="300" placeholder="https://github.com/owner/repo" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="repo-url-hint">
+    <p id="repo-url-hint" class="hint">{{ url_hint }} Public repos work without signing in. For a private repo, use My GitHub repos.</p>
+  </div>
+  <div id="source-github" hidden>
+    <p id="gh-loading" class="muted">Checking your GitHub sign-in…</p>
+    <div id="gh-off" class="callout info" hidden>
+      <div>
+        <strong>Sign in with GitHub is off.</strong>
+        <p id="gh-turn-on"></p>
+        <p><a href="{{ github_help_url }}" target="_blank" rel="noreferrer">How to register your own GitHub App</a> (free, about 5 minutes). Until then, paste the URL of a public repo.</p>
+      </div>
+    </div>
+    <div id="gh-signed-out" hidden>
+      <p class="muted">Sign in to pick from your repos, including private ones. SetupPilot asks GitHub only to read them, never to change them.</p>
+      <button type="button" id="gh-sign-in" class="secondary">Sign in with GitHub</button>
+    </div>
+    <div id="gh-elsewhere" hidden>
+      <p class="muted">Someone is signed in to GitHub from another browser, or from another address of SetupPilot (127.0.0.1 and localhost count as two). Use that one, or sign out here and sign in again.</p>
+      <button type="button" id="gh-sign-out-elsewhere" class="secondary">Sign out</button>
+    </div>
+    <div id="gh-waiting" class="device-code" hidden>
+      <p id="gh-warning" class="callout warn"></p>
+      <{{ heading }} id="gh-step-1" tabindex="-1">1. Copy this code</{{ heading }}>
+      <p class="code-row">
+        <span id="gh-user-code" class="user-code" aria-hidden="true"></span>
+        <span id="gh-user-code-spoken" class="visually-hidden"></span>
+        <button type="button" id="gh-copy" class="secondary small">Copy code</button>
+      </p>
+      <{{ heading }}>2. Paste it on GitHub</{{ heading }}>
+      <p><a id="gh-verify" target="_blank" rel="noreferrer">Open github.com/login/device</a>, paste the code, then press Authorize.</p>
+      <p class="now"><span class="spinner" aria-hidden="true"></span><span>Waiting for you on GitHub…</span><span id="gh-expires" class="now-time"></span></p>
+      <button type="button" id="gh-cancel" class="link-button">Cancel sign-in</button>
+    </div>
+    <div id="gh-signed-in" hidden>
+      <div class="account">
+        <span>Signed in as <strong id="gh-login"></strong> in this browser</span>
+        <button type="button" id="gh-sign-out" class="link-button">Sign out</button>
+      </div>
+      <div class="search">
+        <label for="gh-search">Find one of your repos</label>
+        <input type="search" id="gh-search" placeholder="Name or description" autocomplete="off" autocapitalize="off" spellcheck="false">
+      </div>
+      <p id="gh-count" class="muted" role="status"></p>
+      <ul id="gh-repos" class="repo-list" aria-label="Your repos"></ul>
+      <div class="more"><button type="button" id="gh-more" class="secondary small" hidden>Show more</button></div>
+      <p id="gh-empty" class="callout info" hidden>SetupPilot cannot see any of your repos yet. Choose which repos it may read with the link below, then load the list again.</p>
+      <p id="gh-cut" class="callout warn" hidden>The list was cut short. Raise github.max_repo_pages in config.yaml to see every repo.</p>
+      <p class="hint">Don't see a repo? <a id="gh-manage" target="_blank" rel="noreferrer">Choose which repos SetupPilot can read</a>, then <button type="button" id="gh-refresh" class="link-button">load the list again</button>.</p>
+    </div>
+    <p id="gh-notice" class="callout warn" hidden></p>
+    <p id="gh-problem" class="callout bad" role="alert" hidden></p>
+  </div>
+</fieldset>
+{%- endmacro %}

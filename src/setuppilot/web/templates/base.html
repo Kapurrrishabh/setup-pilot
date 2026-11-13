@@ -39,6 +39,8 @@
     <p id="announce" class="visually-hidden" role="status"></p>
     {% block content %}{% endblock %}
   </main>
+  {# The page scripts read the same labels as the templates. #}
+  {% if self.scripts() %}<script type="application/json" id="page-labels">{{ page_labels|tojson }}</script>{% endif %}
   <script src="{{ url_for('static', filename='app.js') }}"></script>
   {% block scripts %}{% endblock %}
 </body>

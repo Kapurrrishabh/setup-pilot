@@ -1,5 +1,6 @@
 """The pre-flight checklist on the setup page: is everything ready before a run starts?"""
 
+import json
 import os
 import sys
 import tempfile
@@ -16,6 +17,9 @@ from setuppilot.tools.detect import StackCandidate
 from setuppilot.tools.prereqs import ToolProbe, check_prerequisites
 
 _LONG_PATHS_KEY = r"SYSTEM\CurrentControlSet\Control\FileSystem"
+# Asking for the read limit costs no reads (docs.github.com/en/rest/rate-limit). Each pre-flight
+# runs again after a typing pause, so a plain GET would spend 1 of the 60 public reads an hour.
+_RATE_LIMIT_URL = "https://api.github.com/rate_limit"
 
 
 @dataclass(frozen=True)
@@ -63,19 +67,24 @@ def run_preflight(
     docker = StackCandidate("docker", "dockerfile", (), None)
     docker_checks = check_prerequisites(docker, probe, HOST_TARGET)
     docker_problems = [c.problem for c in docker_checks if not c.is_installed and c.problem]
+    reads = _github_reads()
+    left = ""
+    if reads:
+        left = f"{reads['remaining']} of {reads['limit']} public GitHub reads left this hour."
     checks = [
         _check(
             "internet",
             "Internet (GitHub)",
-            _can_reach("https://api.github.com"),
+            reads is not None,
             "Check your connection.",
             is_needed=True,
+            note=left,
         ),
         _check(
             "groq",
             "Groq API key",
             bool(os.environ.get("GROQ_API_KEY")),
-            "Add GROQ_API_KEY to .env. Without it, README tips and the AI report are skipped.",
+            "Add GROQ_API_KEY to .env. Without it, the AI analysis, fixes and report are skipped.",
             is_needed=False,
         ),
         _database_check(stores),
@@ -128,21 +137,27 @@ def _database_check(stores: Stores) -> dict[str, Any]:
     return _check("database", name, True, "", is_needed=False)
 
 
-def _check(check_id: str, name: str, is_ok: bool, fix: str, *, is_needed: bool) -> dict[str, Any]:
+def _check(
+    check_id: str, name: str, is_ok: bool, fix: str, *, is_needed: bool, note: str = ""
+) -> dict[str, Any]:
+    """note is shown whether the check passed or not."""
     return {
         "id": check_id,
         "name": name,
         "is_ok": is_ok,
         "is_needed": is_needed,
         "fix": "" if is_ok else fix,
+        "note": note,
     }
 
 
-def _can_reach(url: str) -> bool:
+def _github_reads() -> dict[str, int] | None:
+    """GitHub's public read limit for this computer, {} when GitHub answered without it, or None
+    when GitHub cannot be reached."""
     try:
-        urllib.request.urlopen(url, timeout=3).close()  # noqa: S310 - fixed https URL
+        with urllib.request.urlopen(_RATE_LIMIT_URL, timeout=3) as response:  # noqa: S310 - fixed https URL
+            return json.load(response)["resources"]["core"]
     except urllib.error.HTTPError:
-        return True  # any HTTP answer (even "rate limited") means the internet works
+        return {}  # any HTTP answer (even "rate limited") means the internet works
     except OSError:
-        return False
-    return True
+        return None

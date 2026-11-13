@@ -1,8 +1,7 @@
 // The live run page. It is drawn from the server's saved view, so a refresh loses only the busy timer.
-const $ = (id) => document.getElementById(id);
 const runId = $("run").dataset.runId;
-const repoName = $("run").dataset.repoName;
-const labels = JSON.parse($("page-labels").textContent);
+// A signed-in run's page comes without its repo; the first view, read with this browser's key, has it.
+let repoName = "";
 // A held or stray key must not answer a question the user has not had time to read.
 // Provisional: 700 ms is a guess; watching people use the page would confirm it.
 const KEY_DELAY_MS = 700;
@@ -14,6 +13,13 @@ const OUTPUT_ERRORS = ["InstallFailed", "CommandTimeout"];
 const CARRY_ON_TEXT = "Carrying on from the last saved point";
 const TONE_WORDS = { ok: "Done", warn: "Needs a look", bad: "Failed" };
 const ANSWER_WORDS = { approve: "approve", reject: "reject", edit: "edit", install: "install", recheck: "check again", done: "done", stop: "stop" };
+const ORIGIN_WORDS = { ai: "From the AI", fix: "A fix from the AI", you: "Your edit" };
+const VERIFICATION_TONES = { setuppilot: "ok", ai_only: "warn", none: "bad" };
+const VERIFICATION_TEXTS = {
+  setuppilot: "SetupPilot ran its own checks for this kind of project, and they passed.",
+  ai_only: "This is weaker than a check by SetupPilot.",
+  none: "Nothing showed that the setup works.",
+};
 
 let view = null;
 let questionId = null;
@@ -26,6 +32,8 @@ let busySince = null;
 let carryOnAtStep = null;
 let lastNews = "";
 let lostContact = false;
+// Fix attempts whose details are open; each update redraws the timeline, which would close them.
+const openAttempts = new Set();
 
 function isOver(v) {
   return v.report !== null || v.run.status === "cancelled";
@@ -49,15 +57,29 @@ function liveStatus(v) {
 function showStatus(status) {
   $("status").dataset.status = status;
   $("status").textContent = labels.statuses[status];
-  document.title = `${labels.statuses[status]} · ${repoName} · SetupPilot`;
+  document.title = `${labels.statuses[status]} · ${repoName || "Private repo"} · SetupPilot`;
+}
+
+function showRepo(v) {
+  if (repoName || !v.run.repo_url) return;
+  repoName = repoNameOf(v.run.repo_url);
+  $("repo").textContent = repoName;
+  const link = githubUrl(v.run.repo_url);
+  if (link) {
+    $("repo").href = link;
+    $("repo").title = link;
+  }
+  $("dest-dir").textContent = v.run.dest_dir;
 }
 
 function render(next) {
   const previous = view;
   view = next;
+  showRepo(next);
   const status = liveStatus(next);
   showStatus(status);
   renderProgress(next);
+  renderAnalysis(next);
   renderSteps(next);
   if (!isAnsweredView(next)) {
     renderNow(next);
@@ -103,11 +125,6 @@ function renderProgress(v) {
   else $("progress-text").textContent = where[0].toUpperCase() + where.slice(1);
 }
 
-function clock(ms) {
-  const seconds = Math.floor(ms / 1000);
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-}
-
 function showNow(text, command) {
   busySince ??= Date.now();
   const parts = command ? [`${text} `, element("code", command)] : [`${text}…`];
@@ -133,8 +150,79 @@ function renderNow(v) {
   else showNow(last ? labels.steps[last.name]?.then ?? "Working" : labels.first_activity);
 }
 
+function stepArguments(v, name) {
+  return v.steps.findLast((step) => step.name === name)?.arguments ?? null;
+}
+
+function renderAnalysis(v) {
+  const analysis = stepArguments(v, "analyze");
+  $("analysis").hidden = analysis === null;
+  if (analysis === null) return;
+  const runnable = analysis.options.filter((option) => option.is_runnable);
+  const isAgreed = runnable.length > 0 && runnable.every((option) => option.source === "both");
+  if (analysis.summary === null) setBadge($("analysis-source"), "Found in the files (the AI was not used)", "neutral");
+  else if (isAgreed) setBadge($("analysis-source"), "The AI and the files agree", "ok");
+  else setBadge($("analysis-source"), "The AI and the files did not fully agree", "warn");
+  $("analysis-summary").textContent = analysis.summary ?? "";
+  $("analysis-summary-box").hidden = analysis.summary === null;
+  const tools = stepArguments(v, "prerequisites")?.tools ?? {};
+  $("analysis-options").replaceChildren(...analysis.options.map((option) => optionItem(option, tools[option.id])));
+  const notes = analysis.notes ?? [];
+  $("analysis-notes").replaceChildren(...notes.map((note) => element("li", note)));
+  $("analysis-notes").hidden = notes.length === 0;
+  // Until tool checks are saved with the step, its summary says what is missing.
+  const toolSummary = v.steps.findLast((step) => step.name === "prerequisites")?.result_summary;
+  $("analysis-tools").textContent = toolSummary ? `Tools: ${toolSummary}` : "";
+  $("analysis-tools").hidden = !toolSummary || Object.keys(tools).length > 0;
+}
+
+function setBadge(badge, text, tone) {
+  badge.textContent = text;
+  badge.dataset.tone = tone;
+}
+
+function sourceBadge(source) {
+  const badge = element("span", undefined, "badge");
+  setBadge(badge, labels.sources[source] ?? source, source === "both" ? "ok" : source === "ai" ? "warn" : "neutral");
+  return badge;
+}
+
+function optionItem(option, checks) {
+  const item = element("li", undefined, option.is_runnable ? "ok" : "optional");
+  const body = element("div", undefined, "check-body");
+  const title = element("span", undefined, "check-title");
+  title.append(element("span", optionName(option.id), "check-name"), sourceBadge(option.source));
+  if (!option.is_runnable) title.append(element("span", "Not offered", "badge"));
+  body.append(title);
+  if (option.note) body.append(element("p", option.note, "hint"));
+  if (checks?.length) body.append(element("p", toolsLine(checks), "hint"));
+  item.append(body);
+  return item;
+}
+
+// "web: node/npm" reads as "Node with npm, in web/".
+function optionName(id) {
+  const [where, stack] = id.includes(": ") ? id.split(": ") : [null, id];
+  const [language, manager] = stack.split("/");
+  const name = `${language[0].toUpperCase()}${language.slice(1)} with ${manager}`;
+  return where ? `${name}, in ${where}/` : name;
+}
+
+function diagnosisDetails(found, attempt) {
+  const details = element("details", undefined, "step-detail");
+  details.open = openAttempts.has(attempt);
+  details.addEventListener("toggle", () => (details.open ? openAttempts.add(attempt) : openAttempts.delete(attempt)));
+  details.append(element("summary", `Fix attempt ${attempt}: what went wrong`));
+  details.append(element("p", `${found.command} failed with exit code ${found.exit_code ?? "none"}.`));
+  if (found.proposed.length) details.append(element("p", `Fixes the AI proposed: ${found.proposed.join("; ")}`));
+  found.refused.forEach((refused) => details.append(element("p", `Not allowed: ${refused.command} (${refused.reason})`)));
+  if (found.missing_tools.length) details.append(element("p", `Tools still missing: ${found.missing_tools.join(", ")}`));
+  return details;
+}
+
 function renderSteps(v) {
   $("steps-empty").hidden = v.steps.length > 0;
+  let attempts = 0;
   $("steps").replaceChildren(
     ...v.steps.map((step) => {
       const item = element("li", undefined, step.tone);
@@ -144,6 +232,7 @@ function renderSteps(v) {
         element("strong", stepLabel(step.name)),
         element("span", step.result_summary, "step-summary")
       );
+      if (step.name === "diagnose" && step.arguments?.command) main.append(diagnosisDetails(step.arguments, ++attempts));
       const meta = [step.duration_ms >= 1000 ? step.duration : "", step.tokens ? `${step.tokens.toLocaleString()} tokens` : ""];
       item.append(main, element("span", meta.filter(Boolean).join(" · "), "step-meta"));
       return item;
@@ -170,13 +259,17 @@ function renderQuestion(v) {
   $("keys-hint").textContent = isChoice
     ? "Keys, while this box has focus: press the number of an option. They do nothing while you type."
     : `Keys, while this box has focus: ${keys.join(", ")}. They do nothing while you type.`;
-  $("command-box").hidden = isChoice || (!isCommand && !question.command);
+  $("command-box").hidden = !isCommand && !(question.kind === "install_tool" && question.command);
   $("question-note").hidden = !isCommand;
   $("question-docker").hidden = !isCommand || !question.in_docker;
   $("question-options").replaceChildren();
   showFacts([]);
   $("question-edited").hidden = true;
   $("question-edit-error").hidden = true;
+  $("question-diagnosis").hidden = true;
+  $("question-manual-box").hidden = true;
+  $("question-origin").hidden = true;
+  $("command-label").textContent = "Command";
   if (isChoice) renderChoice(question);
   else if (isCommand) renderCommand(question);
   else if (question.kind === "install_tool") renderInstall(question);
@@ -190,39 +283,54 @@ function showFacts(facts) {
 }
 
 function renderInstall(question) {
-  $("question-title").textContent = question.command ? `${question.tool} is missing: install it now?` : `${question.tool} is missing: install it, then check again`;
-  $("question-reason").textContent = question.reason ? `${question.problem} It is needed: ${question.reason}.` : question.problem;
+  $("question-title").textContent = question.command ? `${question.tool} is missing. Install it now?` : `${question.tool} is missing. Install it, then check again`;
+  $("question-reason").textContent = question.reason ? `${question.problem} Why it is needed: ${question.reason}.` : question.problem;
+  $("command-label").textContent = "SetupPilot can run this for you";
   $("question-command").textContent = question.command ?? "";
-  const facts = question.command ? [] : [`How to install it on ${question.os}: ${question.manual}`];
-  if (question.command && question.needs_admin) facts.push("It may ask for admin rights in another window.");
+  $("manual-label").textContent = question.command ? "Or install it by hand" : `How to install it on ${question.os}`;
+  $("question-manual").textContent = question.manual;
+  $("question-manual-box").hidden = !question.manual;
+  const facts = [];
+  // winget's license note already says Windows may ask for admin rights.
+  if (question.command && question.needs_admin && !question.note) facts.push("It may ask for admin rights in another window.");
   if (question.note) facts.push(question.note);
   const last = question.last_install;
   if (last) facts.push(`Last try: ${last.command} ended with exit code ${last.exit_code ?? "none"}. ${last.output}`.trim());
-  facts.push(`Try ${question.round}. Stop ends the run.`);
+  facts.push(`Ask ${question.round}. Stop ends the run and shows the report.`);
   showFacts(facts);
 }
 
 function renderFixByHand(question) {
-  $("question-title").textContent = "A step failed: fix it by hand?";
-  $("question-reason").replaceChildren(...withCode(`\`${question.command}\` failed with exit code ${question.exit_code}.`));
-  const facts = [`The AI's guess (it may be wrong): ${question.diagnosis.explanation}`];
-  if (question.user_action) facts.push(`What to do: ${question.user_action}`);
-  question.refused.forEach((refused) => facts.push(`Not run by SetupPilot: ${refused.command} (${refused.reason})`));
-  facts.push("Press done when it is fixed, and SetupPilot runs the step again.");
-  showFacts(facts);
+  $("question-title").textContent = "A step failed. Fix it by hand, then try again";
+  $("question-reason").textContent = "SetupPilot cannot fix this by itself. Do what is below, then press I fixed it.";
+  $("diagnosis-failed").replaceChildren(element("code", question.command), ` failed with exit code ${question.exit_code ?? "none"}.`);
+  $("diagnosis-guess").textContent = question.diagnosis.explanation;
+  $("diagnosis-todo").textContent = question.user_action ?? "";
+  $("diagnosis-todo-box").hidden = !question.user_action;
+  $("diagnosis-refused").replaceChildren(
+    ...question.refused.map((refused) => {
+      const item = element("li");
+      item.append(element("code", refused.command), ` (${refused.reason})`);
+      return item;
+    })
+  );
+  $("diagnosis-refused-box").hidden = question.refused.length === 0;
+  $("question-diagnosis").hidden = false;
 }
 
-function stackName(label) {
-  const [stack, manager] = label.split("/");
-  return `${stack[0].toUpperCase()}${stack.slice(1)} with ${manager}`;
+// Tools an option needs, like "python 3.12.1 installed, uv missing".
+function toolsLine(checks) {
+  const words = (check) => (check.is_installed ? `${check.version ?? ""} installed`.trim() : check.is_required ? "missing" : "missing, optional");
+  return `Tools: ${checks.map((check) => `${check.tool} ${words(check)}`).join(", ")}.`;
 }
 
 function renderChoice(question) {
-  $("question-title").textContent = "Which way should SetupPilot set up this repo?";
+  const projects = new Set(question.options.map((option) => option.project));
+  $("question-title").textContent = projects.size > 1 ? "Which part of this repo should SetupPilot set up?" : "Which way should SetupPilot set up this repo?";
   const conflicts = question.conflicts.join(" ");
   $("question-reason").textContent = `It found more than one way. Pick the one the README uses. ${conflicts}`.trim();
   question.options.forEach((option, index) => {
-    const missing = option.prereqs.filter((check) => !check.is_installed).map((check) => check.tool);
+    const missing = option.prereqs.filter((check) => check.is_blocking).map((check) => check.tool);
     const button = element("button", undefined, "option");
     button.type = "button";
     if (index < 9) {
@@ -232,9 +340,13 @@ function renderChoice(question) {
       button.append(key);
     }
     const body = element("span", undefined, "option-body");
-    body.append(element("strong", stackName(option.label)), element("span", `Found in ${option.evidence.join(", ")}`, "muted"));
+    const title = element("span", undefined, "option-title");
+    title.append(element("strong", optionName(option.label)), sourceBadge(option.source));
+    body.append(title, element("span", `Found in ${option.evidence.join(", ")}`, "muted"));
+    if (option.note) body.append(element("span", option.note, "muted"));
+    if (option.prereqs.length) body.append(element("span", toolsLine(option.prereqs), "muted"));
     if (missing.length) {
-      body.append(element("span", `Not installed: ${missing.join(", ")}. This choice will stop at "${stepLabel("prerequisites")}".`, "option-problem"));
+      body.append(element("span", `Missing: ${missing.join(", ")}. SetupPilot asks you about installing it before it goes on.`, "option-problem"));
     }
     button.append(body);
     button.addEventListener("click", () => send({ choice: index }));
@@ -243,8 +355,11 @@ function renderChoice(question) {
 }
 
 function renderCommand(question) {
+  const optional = question.is_optional ? " It is optional." : "";
   $("question-title").textContent = `Command ${question.step}: ${question.is_check ? "run this check?" : "run this command?"}`;
-  $("question-reason").textContent = question.reason;
+  $("question-reason").textContent = `${question.reason}${optional}`;
+  $("question-origin").textContent = ORIGIN_WORDS[question.origin] ?? "";
+  $("question-origin").hidden = !ORIGIN_WORDS[question.origin];
   if (question.diagnosis) showFacts([`The AI's guess at what went wrong (it may be wrong): ${question.diagnosis.explanation}`]);
   $("question-command").textContent = question.command;
   $("edit-command").value = question.command;
@@ -263,18 +378,24 @@ function renderCommand(question) {
   isNoteShown = true;
 }
 
-// Messages mark commands with backticks; show those parts as code, still as plain text.
-function withCode(text) {
-  return text.split("`").map((part, index) => (index % 2 ? element("code", part) : part));
-}
-
 function renderOutcome(v, previous) {
   const wasHidden = $("report-card").hidden;
   $("report-card").hidden = !isOver(v);
   if (!isOver(v)) return;
   const outcome = v.run.status === "cancelled" ? "cancelled" : v.is_verified ? "verified" : "failed";
   $("report-card").dataset.outcome = outcome;
-  const again = `/?repo=${encodeURIComponent(v.run.repo_url)}`;
+  // A signed-in run's repo is picked again from the list: its URL would stay in the browser's history.
+  const isSignedInRun = v.run.owner_github_id !== null;
+  const again = isSignedInRun ? "/" : `/?repo=${encodeURIComponent(v.run.repo_url)}`;
+  const chat = isSignedInRun ? "/chat" : `/chat?index=${encodeURIComponent(v.run.repo_url)}`;
+  const level = v.verification ?? "none";
+  setBadge($("verification-badge"), labels.verification[level], VERIFICATION_TONES[level]);
+  $("verification-text").textContent = VERIFICATION_TEXTS[level];
+  $("outcome-verification").hidden = outcome === "cancelled";
+  const start = stepArguments(v, "plan")?.start_command;
+  $("start-command").textContent = start ?? "";
+  $("start-where").textContent = v.repo_dir ?? "";
+  $("start-hint").hidden = !start || outcome === "cancelled" || v.repo_dir === null;
   // A second run into the same folder stops at once, because the repo's folder is already there.
   $("outcome-retry").replaceChildren("The repo's files are still in ", element("code", v.repo_dir), ". To try again, delete only that folder, or pick a different folder on the setup page.");
   $("outcome-retry").hidden = outcome === "verified" || v.repo_dir === null;
@@ -283,13 +404,13 @@ function renderOutcome(v, previous) {
   if (outcome === "verified") {
     $("report-title").textContent = "Setup verified";
     $("outcome-message").replaceChildren("SetupPilot's own checks passed. Your repo is ready in ", element("code", v.repo_dir), ".");
-    setActions([["Ask questions about this repo", `/chat?index=${encodeURIComponent(v.run.repo_url)}`], ["See all runs", "/runs"]]);
+    setActions([["Ask questions about this repo", chat], ["See all runs", "/runs"]]);
   } else if (outcome === "cancelled") {
     $("report-title").textContent = "You cancelled this run";
     $("outcome-message").textContent = "Nothing more was run.";
     setActions([["Set up this repo again", again], ["See all runs", "/runs"]]);
   } else {
-    const unchecked = v.verification === "ai_only" ? `${labels.verification.ai_only}. They all passed.` : "SetupPilot's checks did not pass.";
+    const unchecked = v.verification === "ai_only" ? "The checks the AI suggested all passed, but SetupPilot has no checks of its own for this kind of project." : "SetupPilot's checks did not pass.";
     const error = v.error || { error_type: "VerifyFailed", message: unchecked, details: "" };
     $("report-title").textContent = error.error_type === "VerifyFailed" ? "Setup not verified" : labels.errors[error.error_type] ?? error.error_type;
     $("outcome-message").replaceChildren(...withCode(error.message));
@@ -387,6 +508,7 @@ $("edit-command").addEventListener("keydown", (event) => {
   }
 });
 $("edit-cancel").addEventListener("click", () => closeEdit(true));
+$("copy-start").addEventListener("click", () => copyText($("start-command").textContent, $("start-command")));
 // The line that failed is at the end of the output, so open it there.
 $("outcome-output").addEventListener("toggle", () => {
   const box = $("outcome-output-text");
@@ -439,11 +561,11 @@ function lost() {
 
 // The server ends the stream once the run is over (and a cancelled run has saved its last step).
 async function readEvents() {
-  const key = localStorage.getItem("setuppilot-github-binding");
-  const headers = key ? { "X-SetupPilot-Binding": key } : {};
+  const headers = bindingHeaders();
   const response = await fetch(`/api/runs/${runId}/events`, { headers }).catch(lost);
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
+    if (response.status === 401 && BINDING_HEADER in headers) forgetBinding();
     throw new RequestError(data.error || { message: `Could not follow this run (${response.status}).` });
   }
   // The app makes a new page token each time it starts, so after a restart the page must reload.

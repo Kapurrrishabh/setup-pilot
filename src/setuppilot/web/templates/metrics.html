@@ -12,7 +12,7 @@
   <div class="tile"><span class="tile-label">Finished runs</span><strong>{{ summary.finished_runs|number }}</strong><span class="hint">of your last {{ history_limit }} runs</span></div>
   <div class="tile"><span class="tile-label">Success rate</span><strong>{{ '%.0f%%'|format(summary.success_rate * 100) if summary.success_rate is not none else '–' }}</strong><span class="hint">verified; cancelled runs count as not verified</span></div>
   <div class="tile"><span class="tile-label">Average time</span><strong>{{ summary.average_seconds|duration if summary.average_seconds is not none else '–' }}</strong><span class="hint">includes time waiting for you</span></div>
-  <div class="tile"><span class="tile-label">Average tokens per run</span><strong>{{ summary.average_tokens|number if summary.average_tokens is not none else '–' }}</strong><span class="hint">AI tokens for README tips and reports</span></div>
+  <div class="tile"><span class="tile-label">Average tokens per run</span><strong>{{ summary.average_tokens|number if summary.average_tokens is not none else '–' }}</strong><span class="hint">AI tokens for analysis, fixes and reports</span></div>
   <div class="tile"><span class="tile-label">Rate-limit hits</span><strong>{{ summary.rate_limit_hits|number }}</strong><span class="hint">times Groq asked SetupPilot to slow down (all time, setup and chat)</span></div>
   <div class="tile"><span class="tile-label">Used the backup model</span><strong>{{ summary.small_model_fallbacks|number }}</strong><span class="hint">times the main model hit a limit (all time, setup and chat)</span></div>
 </div>

@@ -6,13 +6,13 @@
   <h1>Runs</h1>
   <p class="lead">Your last {{ history_limit }} setup runs, newest first. Open one to see its steps and report.</p>
 </div>
-{% if rows %}
+{# Runs read through a GitHub sign-in are added by history.js, which can send the binding key. #}
 <div id="runs-tools" class="toolbar" hidden>
   <div class="filters" role="group" aria-label="Show runs">
     <button type="button" class="filter" data-status="" aria-pressed="true">All <span class="count">{{ rows|length }}</span></button>
     {% for status, label in page_labels.statuses.items() %}
       {% set count = statuses.values()|select('equalto', status)|list|length %}
-      {% if count %}<button type="button" class="filter" data-status="{{ status }}" aria-pressed="false">{{ label }} <span class="count">{{ count }}</span></button>{% endif %}
+      <button type="button" class="filter" data-status="{{ status }}" aria-pressed="false"{% if not count %} hidden{% endif %}>{{ label }} <span class="count">{{ count }}</span></button>
     {% endfor %}
   </div>
   <div class="search">
@@ -20,13 +20,13 @@
     <input type="search" id="runs-search" placeholder="Find a repo, like pypa/sampleproject" autocomplete="off" autocapitalize="off" spellcheck="false">
   </div>
 </div>
-<p id="runs-count" class="muted" role="status">{{ rows|length }} {{ 'run' if rows|length == 1 else 'runs' }}</p>
-<div class="table-wrap" role="region" aria-label="Setup runs" tabindex="0">
+<p id="runs-count" class="muted" role="status"{% if not rows %} hidden{% endif %}>{{ rows|length }} {{ 'run' if rows|length == 1 else 'runs' }}</p>
+<div id="runs-table" class="table-wrap" role="region" aria-label="Setup runs" tabindex="0"{% if not rows %} hidden{% endif %}>
   <table class="runs">
     <thead><tr><th scope="col">Repo</th><th scope="col">Result</th><th scope="col">Started</th><th scope="col" class="num">Took</th><th scope="col" class="num">Tokens</th><th scope="col">Problem</th></tr></thead>
     <tbody>
     {% for row in rows %}
-      <tr data-status="{{ statuses[row.run.id] }}" data-repo="{{ row.run.repo_url|repo_name|lower }}">
+      <tr data-status="{{ statuses[row.run.id] }}" data-repo="{{ row.run.repo_url|repo_name|lower }}" data-created="{{ row.run.created_at.isoformat() }}">
         <td class="repo"><a href="{{ url_for('run_page', run_id=row.run.id) }}" title="{{ row.run.repo_url }}">{{ row.run.repo_url|repo_name }}</a></td>
         <td class="result"><span class="badge" data-status="{{ statuses[row.run.id] }}">{{ statuses[row.run.id]|status_label }}</span></td>
         <td class="when">{{ when(row.run.created_at) }}</td>
@@ -38,15 +38,14 @@
     </tbody>
   </table>
 </div>
+<p id="runs-signed-in" class="muted" hidden>Runs read through your GitHub sign-in show only in this browser.</p>
 <p id="runs-none" class="empty-note" hidden>No runs match. <button type="button" id="runs-clear" class="link-button">Show all runs</button></p>
 <div class="more"><button type="button" id="runs-more" class="secondary" hidden>Show more</button></div>
-{% else %}
-<section class="card empty">
+<section id="runs-empty" class="card empty"{% if rows %} hidden{% endif %}>
   <span class="empty-mark" aria-hidden="true">+</span>
   <h2>No runs yet</h2>
   <p class="muted">When you set up a repo, it shows up here with its steps and report.</p>
   <div class="actions"><a class="button" href="{{ url_for('setup_page') }}">Set up a repo</a></div>
 </section>
-{% endif %}
 {% endblock %}
 {% block scripts %}<script src="{{ url_for('static', filename='history.js') }}"></script>{% endblock %}
