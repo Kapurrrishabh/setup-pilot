@@ -97,7 +97,7 @@ chat:
   # the question is in the repo. Measured on eval/chat_questions.yaml (2026-11-12): that skips 3
   # of 5 off-topic questions and none of the 64 answerable ones.
   min_similarity: 0.2
-  # PROVISIONAL (research-chat.md): gpt-oss counts its hidden reasoning in this too. Not
+  # PROVISIONAL: gpt-oss counts its hidden reasoning in this too. Not
   # measured yet: that needs a Groq key.
   answer_max_tokens: 1200
   # Every turn not yet summarised goes into each prompt (up to twice this many; more while the

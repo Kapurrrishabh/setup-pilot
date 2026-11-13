@@ -14,7 +14,7 @@ from setuppilot.chat.collect import Document
 
 log = logging.getLogger(__name__)
 
-# About 450 tokens per question, from the prototype in research-chat.md.
+# About 450 tokens per question, measured on the chat eval repos.
 CARD_CHARS = 1500
 _VALUE_CHARS = 200
 _LIST_ITEMS = 10

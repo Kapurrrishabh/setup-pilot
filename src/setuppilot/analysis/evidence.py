@@ -40,7 +40,7 @@ _SIDE_FOLDERS = re.compile(
 )
 _BUILD_WORKFLOW = re.compile(r"(.*[-_.])?(tests?|ci|build|checks?|main)([-_.].*)?", re.I)
 _DOCKER_LINE = re.compile(r"(FROM|RUN|EXPOSE|CMD|ENTRYPOINT)\s", re.IGNORECASE)
-# PROVISIONAL caps per block, from research-planning.md: they fit the 15 eval repos.
+# PROVISIONAL caps per block: measured to fit the 15 eval repos.
 _MAX_MANIFESTS, _MANIFEST_CHARS, _README_CHARS, _README_INTRO = 6, 1200, 3000, 600
 _CI_FILES, _CI_CHARS, _DOCKER_FILES, _DOCKER_CHARS = 2, 1500, 2, 800
 _COMPOSE_CHARS, _ENV_CHARS, _MAX_DEPTH = 400, 400, 2

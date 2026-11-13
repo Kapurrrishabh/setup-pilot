@@ -8,7 +8,7 @@ from setuppilot.analysis.schema import Diagnosis
 from setuppilot.guardrails.commands import split_command
 from setuppilot.tools.prereqs import known_tool
 
-# PROVISIONAL (research-planning.md): two fixes per diagnosis keep each round easy to review.
+# PROVISIONAL: two fixes per diagnosis keep each round easy to review.
 # Confirm on the failures eval-setup finds.
 MAX_FIX_COMMANDS = 2
 _MAX_ACTION_CHARS = 300
