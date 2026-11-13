@@ -132,7 +132,7 @@ def test_a_public_repo_too_big_to_read_is_cloned_instead(settings, cloned):
     index_for_chat(settings, URL, github, "public", FakeEmbedder(), index)
     # The app's own GitHub access, not a new one per clone.
     ((used, request),) = cloned
-    assert (used is github, request) == (True, CloneRequest("public", None))
+    assert (used is github, request) == (True, CloneRequest("public", None, None))
     assert index.repos(None) == [KEY]
 
 

@@ -806,6 +806,16 @@ def test_sign_out_that_github_does_not_confirm_says_how_to_finish_it(signed):
     assert "Authorized GitHub Apps" in warning["details"] and signed.keyring.items == {}
 
 
+def test_sign_out_still_cancels_at_github_when_the_keyring_keeps_the_sign_in(signed):
+    from keyring.errors import PasswordDeleteError
+
+    signed.fake.on("POST", REVOKE_URL, httpx.Response(202))
+    signed.keyring.delete_error = PasswordDeleteError("failed")
+    response = post(signed.web, "/api/github/signout", {})
+    assert response.status_code == 400 and requests_to(signed, REVOKE_URL)
+    assert "GitHub has cancelled the sign-in" in response.get_json()["error"]["details"]
+
+
 def test_the_key_from_an_earlier_sign_in_stops_working(signed_out):
     old_key = sign_in(signed_out)
     post(signed_out.web, "/api/github/signout", {})
@@ -882,7 +892,7 @@ def test_a_signed_in_runs_access_and_sub_folder_reach_the_clone_and_its_user_is_
         if signed.web[5]:
             break
         time.sleep(0.02)
-    assert signed.web[5] == [CloneRequest("github", "packages/web")]
+    assert signed.web[5] == [CloneRequest("github", "packages/web", USER.id)]
     assert signed.web[3].runs.get_run(run_id).owner_github_id == USER.id
 
 

@@ -21,6 +21,7 @@ from tests.fakes import FakeClock, fake_executable
 from tests.github_fakes import (
     REPO_URL,
     TREE_URL,
+    USER,
     FakeGitHub,
     GitServer,
     MemoryKeyring,
@@ -34,8 +35,8 @@ from tests.github_fakes import (
     tree_of,
 )
 
-PUBLIC = CloneRequest("public", None)
-SIGNED_IN = CloneRequest("github", None)
+PUBLIC = CloneRequest("public", None, None)
+SIGNED_IN = CloneRequest("github", None, USER.id)
 REF = RepoRef("o", "r")
 CONFIG = RepoConfig(max_size_mb=1, clone_timeout_seconds=60, max_tree_chars=2000)
 TOKEN = "ghu_cloneSecret0123456789"  # noqa: S105 - a fake token
@@ -274,7 +275,7 @@ def test_a_sub_folder_clone_downloads_only_that_folders_files(tmp_path, monkeypa
         clone_from(monkeypatch, f"{server.url}/o/r.git")
         fake = FakeGitHub()
         serve_api(fake, tree)
-        request = CloneRequest("github", "sub/app")
+        request = CloneRequest("github", "sub/app", USER.id)
         target = clone_repo(REF, tmp_path, CONFIG, signed_in(fake), request)
     finally:
         server.close()
@@ -306,7 +307,7 @@ def test_a_sub_folder_is_sized_by_what_cone_mode_checks_out_and_never_by_git(
     monkeypatch.setenv("FAIL_ON", "nothing")
     fake = FakeGitHub()
     serve_api(fake, tree_json(SPLIT_REPO))
-    clone_repo(REF, tmp_path, CONFIG, public(fake), CloneRequest("public", "packages/web"))
+    clone_repo(REF, tmp_path, CONFIG, public(fake), CloneRequest("public", "packages/web", None))
     calls = [argv for argv, _ in recording_git()]
     assert not any("ls-tree" in argv for argv in calls)
     assert {"--filter=blob:none", "--sparse"} <= set(calls[0])
@@ -319,7 +320,9 @@ def test_a_sub_folder_too_big_for_the_limit_is_refused_before_anything_is_downlo
     fake = FakeGitHub()
     serve_api(fake, tree_json(SPLIT_REPO | {"setup.cfg": b"x" * 200_000}))
     with pytest.raises(CloneFailed, match="files were not checked out"):
-        clone_repo(REF, tmp_path, CONFIG, public(fake), CloneRequest("public", "packages/web"))
+        clone_repo(
+            REF, tmp_path, CONFIG, public(fake), CloneRequest("public", "packages/web", None)
+        )
     assert recording_git() == []
 
 
@@ -334,7 +337,9 @@ def test_a_sub_folder_that_cannot_be_checked_is_refused_before_cloning(
     fake = FakeGitHub()
     serve_api(fake, tree)
     with pytest.raises(CloneFailed, match=says):
-        clone_repo(REF, tmp_path, CONFIG, public(fake), CloneRequest("public", "apps/missing"))
+        clone_repo(
+            REF, tmp_path, CONFIG, public(fake), CloneRequest("public", "apps/missing", None)
+        )
     assert recording_git() == []
 
 
@@ -342,7 +347,9 @@ def test_a_sub_folder_needs_githubs_list_so_github_being_down_stops_it(tmp_path,
     fake = FakeGitHub()
     fake.on("GET", REPO_URL, httpx.ConnectError("offline"))
     with pytest.raises(CloneFailed, match="Could not reach GitHub"):
-        clone_repo(REF, tmp_path, CONFIG, public(fake), CloneRequest("public", "packages/web"))
+        clone_repo(
+            REF, tmp_path, CONFIG, public(fake), CloneRequest("public", "packages/web", None)
+        )
     assert recording_git() == []
 
 
@@ -351,12 +358,12 @@ def test_a_sub_folder_needs_githubs_list_so_github_being_down_stops_it(tmp_path,
 )
 def test_a_sub_folder_that_is_not_a_plain_folder_path_is_refused(subdir):
     with pytest.raises(PathBlocked, match="sub-folder"):
-        CloneRequest("public", subdir)
+        CloneRequest("public", subdir, None)
 
 
 @pytest.mark.parametrize("subdir", ["packages/web", "a.b_c-d", "x" * 200])
 def test_plain_folder_paths_are_accepted(subdir):
-    assert CloneRequest("github", subdir).subdir == subdir
+    assert CloneRequest("github", subdir, USER.id).subdir == subdir
 
 
 def test_a_push_between_githubs_list_and_the_clone_sizes_the_commit_that_was_cloned(
@@ -473,3 +480,20 @@ def test_clone_does_not_ask_for_a_password(tmp_path, monkeypatch):
     with pytest.raises(CloneFailed) as error:
         git_clone("https://github.com/o/r.git", tmp_path / "out", CONFIG, None, None)
     assert "prompt=0" in error.value.details
+
+
+@pytest.mark.parametrize(
+    ("access", "owner"), [("github", None), ("public", USER.id)]
+)  # fmt: skip
+def test_only_a_signed_in_request_names_its_github_user(access, owner):
+    with pytest.raises(CloneFailed, match="must name its GitHub user"):
+        CloneRequest(access, None, owner)
+
+
+def test_a_run_started_by_another_github_user_never_gets_this_users_token(tmp_path, recording_git):
+    fake = FakeGitHub()
+    serve_api(fake, tree_json({"README.md": b"x"}), is_private=True)
+    someone_else = CloneRequest("github", None, USER.id + 1)
+    with pytest.raises(CloneFailed, match="sign-in changed"):
+        clone_repo(REF, tmp_path, CONFIG, signed_in(fake), someone_else)
+    assert recording_git() == []

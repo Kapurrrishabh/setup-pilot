@@ -5,6 +5,7 @@ localStorage and sends it as X-SetupPilot-Binding; only a hash of it is kept, wi
 cookie would not do: the local dev servers SetupPilot starts get this app's cookies too.
 """
 
+import contextlib
 import secrets
 import threading
 import time
@@ -16,7 +17,7 @@ from setuppilot.errors import SetupPilotError
 from setuppilot.github import device_flow
 from setuppilot.github.api import FixedToken, GitHubAuthEnded, GitHubClient, GitHubError, RepoInfo
 from setuppilot.github.device_flow import PendingSignIn, TokenGrant
-from setuppilot.github.vault import GitHubCredentials, new_binding
+from setuppilot.github.vault import GitHubCredentials, SignInNotRemoved, new_binding
 from setuppilot.tools.clone import SIGN_IN_OFF, GitHubAccess, SignedIn
 from setuppilot.tools.github_url import parse_github_url
 
@@ -172,12 +173,17 @@ def add_github_routes(app: Flask, github: GitHubAccess, max_repo_pages: int) -> 
             waiting.clear()
         try:
             credentials = signed_in.vault.clear()
-        except GitHubError as error:
-            raise GitHubError(
-                error.message,
-                details=f"{error.details} Also remove SetupPilot under GitHub Settings > "
-                "Applications > Authorized GitHub Apps, so GitHub cancels the sign-in.",
-            ) from error
+        except SignInNotRemoved as error:
+            # Cancelled at GitHub all the same, so the copy the keyring kept no longer works.
+            at_github = (
+                " Also remove SetupPilot under GitHub Settings > Applications > Authorized "
+                "GitHub Apps, so GitHub cancels the sign-in."
+            )
+            if error.credentials is not None:
+                with contextlib.suppress(GitHubError):
+                    device_flow.revoke(signed_in.http, _tokens(error.credentials.grant))
+                    at_github = " GitHub has cancelled the sign-in, so that copy no longer works."
+            raise GitHubError(error.message, details=f"{error.details}{at_github}") from error
         if credentials is None:
             return jsonify(warning=None)
         try:

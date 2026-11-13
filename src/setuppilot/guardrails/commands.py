@@ -89,7 +89,9 @@ _TOOL_BLOCKED_FLAGS = {
 }
 # MSBuild's -p can set any property, and some run a program (PreBuildEvent) or load a file
 # (CustomBeforeMicrosoftCommonTargets), so only these may be set.
-_DOTNET_PROPERTY = re.compile(r"(?:--?|/)(?:p|property|rp|restoreproperty)(?::(.*))?", re.I | re.S)
+_DOTNET_PROPERTY = re.compile(
+    r"(?:--?|/)(?:p|property|rp|restoreproperty)(?:[:=](.*))?", re.I | re.S
+)
 _DOTNET_PROPERTIES = ("Configuration", "TargetFramework")
 # Never taken from the AI: they pick where packages come from or which program runs the scripts,
 # and a README or a build's output can ask for them. You can still type them in an edit.
@@ -98,6 +100,7 @@ _NOT_FROM_THE_AI = {
     "--registry", "--script-shell", "--source", "--configfile", "--userconfig",
 }  # fmt: skip
 _NOT_FROM_THE_AI_SHORT = {"uv": ("-i", "-f"), "dotnet": ("-s",)}
+_REMOTE_PACKAGE_PREFIXES = ("git+", "github:", "gitlab:", "bitbucket:", "gist:")
 # uv must be told the repo's .venv, so a parent folder's venv or the repo's own uv settings
 # cannot send packages anywhere else. Checked on edits too, not only on SetupPilot's plans.
 _REQUIRED_ARGS: dict[tuple[str, ...], tuple[str, ...]] = {
@@ -162,6 +165,9 @@ def validate_command(text: str, guard: PathGuard, target: ExecTarget) -> SafeCom
     _check_required(name, argv, text)
     for arg in argv[1:]:
         _check_arg(arg, guard, text)
+        if name == "dotnet" and arg.startswith(("-", "/")) and ":" in arg:
+            # MSBuild switches take their value after ':', like --preprocess:../out.xml.
+            _check_arg(arg.split(":", 1)[1], guard, text)
     return SafeCommand((program, *argv[1:]), guard.workspace, text, None)
 
 
@@ -172,7 +178,24 @@ def validate_ai_command(text: str, guard: PathGuard, target: ExecTarget) -> Safe
     short = _NOT_FROM_THE_AI_SHORT.get(_program_name(argv[0], target).rsplit("/", 1)[-1], ())
     for arg in argv[1:]:
         flag = arg.split("=", 1)[0]
-        if flag in _NOT_FROM_THE_AI or flag.endswith(":registry") or arg.startswith(short):
+        # npm and pnpm also take a long flag cut short, like --reg for --registry.
+        is_cut_short = (
+            flag.startswith("--")
+            and len(flag) >= 5
+            and any(denied.startswith(flag) for denied in _NOT_FROM_THE_AI)
+        )
+        if not arg.startswith("-") and ("://" in arg or arg.startswith(_REMOTE_PACKAGE_PREFIXES)):
+            raise _blocked(
+                text,
+                f"{arg!r} fetches a package from a link, so SetupPilot does not take it from the "
+                "AI. Run it yourself if you trust it.",
+            )
+        if (
+            flag in _NOT_FROM_THE_AI
+            or is_cut_short
+            or flag.endswith(":registry")
+            or arg.startswith(short)
+        ):
             raise _blocked(
                 text,
                 f"{arg!r} can change where packages come from or what runs the scripts, so "

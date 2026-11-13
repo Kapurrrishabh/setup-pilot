@@ -44,7 +44,7 @@ def chat_repo_folder(settings: Settings, url: str, github: GitHubAccess) -> tupl
         )
     if not folder.exists():
         owner_dir.mkdir(parents=True, exist_ok=True)
-        clone_repo(ref, owner_dir, settings.repo, github, CloneRequest("public", None))
+        clone_repo(ref, owner_dir, settings.repo, github, CloneRequest("public", None, None))
         (folder / _DONE_MARKER).touch()
     return repo_key(url), ref.url, folder
 

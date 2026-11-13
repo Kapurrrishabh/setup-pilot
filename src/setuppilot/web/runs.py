@@ -65,7 +65,7 @@ class RunManager:
     ) -> str:
         """owner_github_id is the signed-in GitHub user who starts the run, or None for a public
         repo. The clone uses the sign-in only for a run that belongs to someone."""
-        request = CloneRequest(run_access(owner_github_id), subdir)
+        request = CloneRequest(run_access(owner_github_id), subdir, owner_github_id)
         run = self._runs.create_run(repo_url, dest_dir, owner_github_id)
         self._in_background(
             run.id,

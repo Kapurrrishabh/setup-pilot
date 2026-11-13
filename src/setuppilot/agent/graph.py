@@ -270,7 +270,9 @@ def _save_step(
 def _clone(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
     ref = parse_github_url(state["repo_url"])
     # Runs saved before v2 have no access field, and were all public.
-    request = CloneRequest(state.get("access", "public"), state.get("subdir"))
+    # The owner comes from the saved run, never from anything the request sent.
+    owner = deps.runs.get_run(state["run_id"]).owner_github_id
+    request = CloneRequest(state.get("access", "public"), state.get("subdir"), owner)
     target = deps.clone(ref, Path(state["dest_dir"]), request)
     return {"repo_dir": str(target)}, StepNote(
         f"Cloned {ref.url} to {target}.", "git", {"url": ref.url}

@@ -78,6 +78,14 @@ def _call_keyring[**P, T](call: Callable[P, T], *args: P.args, **kwargs: P.kwarg
         raise KeyringError(f"{type(error).__name__}: {error}") from error
 
 
+class SignInNotRemoved(GitHubError):
+    """The keyring kept the sign-in. It carries the tokens, so GitHub can still cancel them."""
+
+    def __init__(self, error: GitHubError, credentials: "GitHubCredentials | None") -> None:
+        super().__init__(error.message, details=error.details)
+        self.credentials = credentials
+
+
 class TokenVault:
     """The one place the GitHub sign-in lives. Its tokens leave only through access_token()."""
 
@@ -188,7 +196,10 @@ class TokenVault:
         """Forget the sign-in here and in the keyring. Returns it, so its tokens can be revoked."""
         with self._lock:
             credentials = self._credentials
-            self._forget()
+            try:
+                self._forget()
+            except GitHubError as error:
+                raise SignInNotRemoved(error, credentials) from error
             return credentials
 
     def _write(self, credentials: GitHubCredentials) -> None:

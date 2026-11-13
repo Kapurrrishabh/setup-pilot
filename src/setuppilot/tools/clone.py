@@ -16,7 +16,7 @@ import httpx
 
 from setuppilot.config import GitHubApp, RepoConfig
 from setuppilot.errors import CloneFailed, PathBlocked, PrereqMissing
-from setuppilot.github.api import GitHubClient, GitHubError, GitHubNotFound, Tree
+from setuppilot.github.api import GitHubAuthEnded, GitHubClient, GitHubError, GitHubNotFound, Tree
 from setuppilot.github.vault import TokenVault
 from setuppilot.guardrails.commands import ExecTarget
 from setuppilot.guardrails.runner import HOST_TARGET
@@ -126,12 +126,19 @@ class CloneRequest:
 
     access: RepoAccess
     subdir: str | None
+    # The GitHub user the run belongs to: set exactly when access is "github".
+    owner_github_id: int | None
 
     def __post_init__(self) -> None:
         if self.access not in get_args(RepoAccess):
             raise CloneFailed(
                 "SetupPilot can read a repo only as public, or through your GitHub sign-in.",
                 details=f"access must be 'public' or 'github', not {self.access!r}.",
+            )
+        if (self.access == "github") != (self.owner_github_id is not None):
+            raise CloneFailed(
+                "A run through your GitHub sign-in must name its GitHub user, and only then.",
+                details=f"access {self.access!r} with owner {self.owner_github_id!r}.",
             )
         subdir = self.subdir
         if subdir is not None and (
@@ -167,6 +174,18 @@ def _auth(url: str, token: str) -> _Auth:
     return _Auth(("-c", "http.followRedirects=false"), env)
 
 
+def _token_of(signed_in: SignedIn, request: CloneRequest) -> str:
+    """The sign-in's token, only while it is still the run's owner who is signed in: a run
+    started by one user must never read with another user's token."""
+    user = signed_in.vault.user
+    if user is None or user.id != request.owner_github_id:
+        raise GitHubAuthEnded(
+            "The GitHub sign-in changed after this run started, so it was not used.",
+            details="Sign in again as the user who started the run, then start it again.",
+        )
+    return signed_in.vault.access_token()
+
+
 def clone_repo(
     ref: RepoRef, dest_dir: Path, config: RepoConfig, github: GitHubAccess, request: CloneRequest
 ) -> Path:
@@ -187,7 +206,7 @@ def clone_repo(
         found = _look_up(ref, client, request)
         named, tree = found if found else (ref, None)
         url = named.clone_url
-        auth = None if signed_in is None else _auth(url, signed_in.vault.access_token())
+        auth = None if signed_in is None else _auth(url, _token_of(signed_in, request))
         size = None if tree is None else _api_size(tree, request.subdir)
         if size is not None:
             _check_size(size, config, None)

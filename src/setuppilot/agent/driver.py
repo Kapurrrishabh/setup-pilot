@@ -74,7 +74,7 @@ class SetupAgent:
     ) -> Waiting | Finished:
         """owner_github_id is the signed-in GitHub user, or None for a public repo, as in
         RunManager.start."""
-        request = CloneRequest(run_access(owner_github_id), subdir)
+        request = CloneRequest(run_access(owner_github_id), subdir, owner_github_id)
         run = self._deps.runs.create_run(repo_url, dest_dir, owner_github_id)
         return self.begin(run.id, repo_url, dest_dir, use_docker, request)
 
