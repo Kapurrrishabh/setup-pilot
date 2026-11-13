@@ -1,8 +1,9 @@
 """The shape of the AI's answers. Groq's strict mode makes the model follow it exactly."""
 
-from typing import Any, Literal
+from collections.abc import Callable
+from typing import Annotated, Any, Literal, get_args
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, BeforeValidator, ConfigDict, WithJsonSchema
 
 from setuppilot.llm.transport import JsonSchema
 
@@ -22,19 +23,59 @@ Language = Literal[
 ]  # fmt: skip
 
 
+# Names the model often writes for the same thing; anything else unknown becomes "other".
+_SYNONYMS = {
+    "maven": "mvn", "apache maven": "mvn", "nodejs": "node", "node.js": "node",
+    "golang": "go", "rust": "cargo", "rustc": "cargo", "rustup": "cargo", "python3": "python",
+    "docker-compose": "docker compose", "compose": "docker compose", "bundler": "bundle",
+    "gem": "ruby", "jdk": "java", "openjdk": "java", "gradlew": "gradle", ".net": "dotnet",
+    "dotnet-sdk": "dotnet", "js": "javascript", "ts": "typescript", "c#": "csharp",
+    "c++": "cpp", "postgresql": "postgres", "mongo": "mongodb", "elastic": "elasticsearch",
+}  # fmt: skip
+_MANAGER_SYNONYMS = {"mvn": "maven", "bundle": "bundler", "docker compose": "compose",
+                     "docker-compose": "compose", "pip-tools": "pip"}  # fmt: skip
+
+
+def _pick_from(names: Any, synonyms: dict[str, str]) -> Callable[[Any], Any]:
+    """Groq's strict mode refuses a whole answer for one name off an enum, so these fields are
+    plain strings to the model, and the name is mapped to the fixed list here instead."""
+    known = set(get_args(names))
+
+    def pick(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        name = value.strip().lower()
+        name = synonyms.get(name, name)
+        return name if name in known else "other"
+
+    return pick
+
+
+ServiceKind = Literal[
+    "postgres", "mysql", "mongodb", "redis", "rabbitmq", "elasticsearch", "kafka", "other"
+]  # fmt: skip
+_AS_TEXT = WithJsonSchema({"type": "string"})
+ToolName = Annotated[ToolId, BeforeValidator(_pick_from(ToolId, _SYNONYMS)), _AS_TEXT]
+ManagerName = Annotated[
+    Manager, BeforeValidator(_pick_from(Manager, {**_SYNONYMS, **_MANAGER_SYNONYMS})), _AS_TEXT
+]
+LanguageName = Annotated[Language, BeforeValidator(_pick_from(Language, _SYNONYMS)), _AS_TEXT]
+ServiceName = Annotated[ServiceKind, BeforeValidator(_pick_from(ServiceKind, _SYNONYMS)), _AS_TEXT]
+
+
 class _Strict(BaseModel):
     # No defaults: strict mode needs every field listed as required.
     model_config = ConfigDict(extra="forbid")
 
 
 class Runtime(_Strict):
-    tool: ToolId
+    tool: ToolName
     constraint: str | None
     source: str
 
 
 class ToolNeed(_Strict):
-    tool: ToolId
+    tool: ToolName
     name: str
     is_required: bool
     version: str | None
@@ -49,9 +90,7 @@ class EnvNeed(_Strict):
 
 
 class Service(_Strict):
-    kind: Literal[
-        "postgres", "mysql", "mongodb", "redis", "rabbitmq", "elasticsearch", "kafka", "other"
-    ]
+    kind: ServiceName
     version: str | None
     how: Literal["compose", "manual", "external"]
 
@@ -67,9 +106,9 @@ class Project(_Strict):
     path: str
     name: str
     role: Literal["app", "library", "cli", "service", "docs", "example", "other"]
-    languages: list[Language]
+    languages: list[LanguageName]
     frameworks: list[str]
-    package_manager: Manager
+    package_manager: ManagerName
     runtime: Runtime | None
     tools: list[ToolNeed]
     env: list[EnvNeed]
@@ -98,7 +137,7 @@ class Diagnosis(_Strict):
     explanation: str
     needs_user: bool
     user_action: str | None
-    missing_tools: list[ToolId]
+    missing_tools: list[ToolName]
     commands: list[FixCommand]
 
 

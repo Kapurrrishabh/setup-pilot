@@ -481,3 +481,25 @@ def test_setuppilots_own_check_marked_manual_by_the_ai_is_not_a_step_for_you():
 def test_a_manual_step_that_only_starts_like_setuppilots_own_is_still_listed(installs, manual):
     plan = merged([ai_step(manual, is_manual=True)], installs=installs)
     assert plan.manual_steps == [f"{manual} (the README says so)"]
+
+
+def test_a_tool_or_service_name_off_the_list_is_mapped_not_refused():
+    from setuppilot.analysis.schema import Service, ToolNeed
+
+    need = {"name": "Maven", "is_required": True, "version": None, "reason": "pom.xml"}
+    assert ToolNeed.model_validate(need | {"tool": "Maven"}).tool == "mvn"
+    assert ToolNeed.model_validate(need | {"tool": "kubectl"}).tool == "other"
+    assert (
+        Service.model_validate({"kind": "Kubernetes", "version": None, "how": "manual"}).kind
+        == "other"
+    )
+
+
+def test_groq_is_not_given_an_enum_for_open_ended_names():
+    # Groq's strict mode drops the whole answer when one value is off an enum.
+    import json
+
+    from setuppilot.analysis.schema import ANALYSIS_FORMAT
+
+    text = json.dumps(ANALYSIS_FORMAT.schema)
+    assert '"mvn"' not in text and '"kafka"' not in text and '"typescript"' not in text
