@@ -75,7 +75,7 @@ agent:
   # 2026-11-12) and 3 real diagnoses fit too. Raise them if the run notes say "cut off".
   analyze_max_tokens: 2000
   diagnose_max_tokens: 900
-  # PROVISIONAL limits from research-planning.md.
+  # PROVISIONAL: picked, not measured; raise them if real repos often need more.
   max_install_rounds: 3
   max_fixes_per_step: 2
   max_fixes_per_run: 3

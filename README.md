@@ -179,7 +179,8 @@ files say. A command never runs while a tool it needs is missing.
 - The install command comes from a fixed table in SetupPilot, never from the AI or the repo, and
   it cannot be edited.
 - Then ask it to check again. It reads Windows' saved PATH again, so a tool you just installed is
-  found without a restart. It asks at most 3 times (`agent.max_install_rounds`).
+  found without a restart. It asks at most 3 times in one run, for all tools together
+  (`agent.max_install_rounds`); a repo that needs more missing tools than that stops with a list.
 - A Node, Java, .NET or Ruby version outside the range the project asks for stops the run. Any
   other version difference is a warning.
 
