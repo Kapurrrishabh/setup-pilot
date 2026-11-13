@@ -328,8 +328,12 @@ def allowlist_digest(target: ExecTarget) -> str:
         forms(key if key.startswith(".") else "./" + key, rule)
         for key, rule in WORKSPACE_PROGRAMS[target].items()
     ]
+    # Real Groq copied the bare form `uv pip install --python .venv`, which installs nothing.
+    pip = " ".join(("uv", "pip", "install", *_REQUIRED_ARGS[("uv", "pip", "install")]))
     lines.append(
-        "Rules: one command, no shell characters (; | & > < ` $( ), never "
+        "Rules: a form is only how a command starts, so add what it works on, as in "
+        f"`{pip} -e .` or `{pip} -r requirements.txt`, never `{pip}` alone. "
+        "One command, no shell characters (; | & > < ` $( ), never "
         + ", ".join(sorted(_NEVER))
         + ". No .., ~ or absolute paths: stay in the project folder. No "
         + ", ".join(sorted(_BLOCKED_FLAGS))

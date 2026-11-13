@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 
 from setuppilot.chat.bot import IndexResult, index_documents, index_repo
-from setuppilot.chat.collect import TREE_PATH, Document, _document, file_kind
+from setuppilot.chat.collect import documents_from_snapshot, file_kind
 from setuppilot.chat.embed import Embedder
 from setuppilot.chat.index import ChatRepo, ChunkIndex
 from setuppilot.config import Settings
@@ -24,7 +24,6 @@ from setuppilot.tools.clone import (
     reader_for,
 )
 from setuppilot.tools.github_url import parse_github_url
-from setuppilot.tools.scan import SKIP_DIRS, RepoScan
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +58,7 @@ def repo_key(url: str) -> str:
 def index_github_repo(
     settings: Settings, url: str, embedder: Embedder, index: ChunkIndex
 ) -> tuple[str, IndexResult]:
-    """Index one public repo for the chatbot, without sign-in (the terminal and the evaluation).
+    """Index one public repo for the chatbot, without sign-in, for the terminal chat.
     Returns its key and the result."""
     return index_for_chat(settings, url, public_github(), "public", embedder, index)
 
@@ -101,7 +100,9 @@ def index_for_chat(
                 snapshot.commit_sha,
                 _owner(snapshot, signed_in),
             )
-            documents = _documents(snapshot, settings.repo.max_tree_chars)
+            documents = documents_from_snapshot(
+                snapshot.entries, snapshot.files, settings.repo.max_tree_chars
+            )
             return repo.key, index_documents(repo, documents, config, embedder, index)
     key, clean_url, folder = chat_repo_folder(settings, url, github)
     repo = ChatRepo(key, clean_url, head_commit(folder, settings.repo), owner_github_id=None)
@@ -124,20 +125,3 @@ def _owner(snapshot: RepoSnapshot, signed_in: SignedIn | None) -> int | None:
             details="Sign in with GitHub, then index it again.",
         )
     return user.id
-
-
-def _documents(snapshot: RepoSnapshot, tree_chars: int) -> list[Document]:
-    """The documents collect_documents makes from a clone: the tree lists what scan_repo would
-    (no links, nothing in skipped folders)."""
-    paths = tuple(
-        e.path
-        for e in snapshot.entries
-        if not e.is_link and SKIP_DIRS.isdisjoint(e.path.split("/")[:-1])
-    )
-    tree = RepoScan(Path(), paths, (), ()).tree_summary(tree_chars)
-    documents = [Document(TREE_PATH, tree, "tree")]
-    for path, text in sorted(snapshot.files.items()):
-        kind = file_kind(path)
-        if kind is not None and (document := _document(path, kind, text.encode())) is not None:
-            documents.append(document)
-    return documents

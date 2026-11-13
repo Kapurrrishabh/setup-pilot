@@ -1,8 +1,6 @@
-import io
 import json
 import logging
 import subprocess
-import tarfile
 import time
 from dataclasses import replace
 from itertools import pairwise
@@ -24,16 +22,12 @@ from setuppilot.chat.bot import (
 )
 from setuppilot.chat.card import CARD_CHARS, build_repo_card
 from setuppilot.chat.chunks import Chunk, chunk_document
-from setuppilot.chat.collect import (
-    Document,
-    TarballLimits,
-    collect_documents,
-    documents_from_tarball,
-)
+from setuppilot.chat.collect import Document, collect_documents, documents_from_snapshot
 from setuppilot.chat.index import ChatRepo, IndexedRepo, InMemoryChunkIndex
 from setuppilot.chat.search import fuse_rankings, tokens
 from setuppilot.config import load_settings
 from setuppilot.errors import CloneFailed, LLMUnavailable
+from setuppilot.github.api import TreeEntry
 from setuppilot.tools.scan import scan_repo
 from tests.fakes import (
     FAKE_COMMIT,
@@ -167,54 +161,11 @@ def test_source_files_named_like_docs_are_still_code_and_deep_licenses_are_skipp
     assert docs == {"(file tree)": "tree", "license_utils.py": "code"}
 
 
-# Reading from a GitHub tarball
-
-
-def tarball(files, links=(), top="someone-demo-0123abc"):
-    data = io.BytesIO()
-    with tarfile.open(fileobj=data, mode="w:gz") as archive:
-        for name, text in files.items():
-            raw = text.encode()
-            member = tarfile.TarInfo(f"{top}/{name}" if top else name)
-            member.size = len(raw)
-            archive.addfile(member, io.BytesIO(raw))
-        for name, target in links:
-            link = tarfile.TarInfo(f"{top}/{name}")
-            link.type, link.linkname = tarfile.SYMTYPE, target
-            archive.addfile(link)
-    return data.getvalue()
-
-
-LIMITS = TarballLimits(max_file_bytes=CHAT.max_file_bytes, max_total_bytes=10**6, tree_chars=2000)
-
-
-def test_tarball_gives_the_same_documents_as_a_clone(tmp_path):
-    scan = scan_repo(make_repo(tmp_path / "r", REPO))
-    from_clone = collect_documents(scan, CHAT.max_file_bytes, 2000)
-    from_tarball = documents_from_tarball(tarball(REPO), LIMITS)
-    assert sorted(from_tarball, key=lambda d: d.path) == sorted(from_clone, key=lambda d: d.path)
-
-
-def test_tarball_leaves_out_links_odd_paths_and_skipped_folders():
-    files = {"README.md": "# Hi\n", "a/../escape.md": "x", "node_modules/x/index.js": "y"}
-    docs = documents_from_tarball(tarball(files, links=[("LICENSE", "/etc/passwd")]), LIMITS)
-    assert [(d.path, d.text) for d in docs] == [
-        ("(file tree)", "README.md"),
-        ("README.md", "# Hi\n"),
-    ]
-
-
-def test_tarball_with_too_much_text_is_refused():
-    limits = replace(LIMITS, max_total_bytes=100)
-    with pytest.raises(CloneFailed, match="too much text"):
-        documents_from_tarball(tarball({"README.md": "x" * 60, "docs/b.md": "y" * 60}), limits)
-
-
-@pytest.mark.parametrize("keep", [0.1, 0.5, 0.9])
-def test_cut_short_or_broken_tarball_is_a_clear_error(keep):
-    data = tarball(REPO | {f"docs/page{n}.md": f"# Page {n}\n" * 50 for n in range(20)})
-    with pytest.raises(CloneFailed, match="could not be read"):
-        documents_from_tarball(data[: int(len(data) * keep)], LIMITS)
+def test_files_read_from_github_leave_links_and_skipped_folders_out_of_the_tree():
+    entries = [TreeEntry("README.md", 5, False), TreeEntry("LICENSE", 11, True),
+               TreeEntry("node_modules/x/index.js", 1, False)]  # fmt: skip
+    docs = documents_from_snapshot(entries, {"README.md": "# Hi\n"}, 2000)
+    assert [d.path for d in docs] == ["(file tree)", "README.md"] and docs[0].text == "README.md"
 
 
 # Chunking

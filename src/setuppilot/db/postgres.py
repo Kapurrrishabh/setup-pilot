@@ -212,7 +212,7 @@ class PostgresRunStore:
     def __init__(self, pool: Pool) -> None:
         self._pool = pool
 
-    def create_run(self, repo_url: str, dest_dir: str, owner_github_id: int | None = None) -> Run:
+    def create_run(self, repo_url: str, dest_dir: str, owner_github_id: int | None) -> Run:
         with _connection(self._pool) as conn:
             (row,) = conn.execute(
                 "insert into runs (repo_url, dest_dir, owner_github_id, status) "

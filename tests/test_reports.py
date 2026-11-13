@@ -26,7 +26,7 @@ class RunsWithFixedTimes(InMemoryRunStore):
 
 
 def finished_run(runs, usage, status, tokens, seconds, error_type=None):
-    run = runs.create_run(REPO, "/home/dev/work")
+    run = runs.create_run(REPO, "/home/dev/work", None)
     runs.set_status(run.id, status, error_type, None)
     runs.seconds[run.id] = seconds
     usage.add(Usage(run.id, "big", tokens, 0, False, datetime.now(UTC)))
@@ -42,7 +42,7 @@ def test_recent_runs_show_tokens_and_time():
 
 def test_unfinished_run_has_no_time_yet():
     runs, usage = InMemoryRunStore(), InMemoryUsageStore()
-    runs.create_run(REPO, "/home/dev/work")
+    runs.create_run(REPO, "/home/dev/work", None)
     assert recent_runs(runs, usage, 10)[0].seconds is None
 
 
@@ -51,7 +51,7 @@ def test_summary_counts_only_finished_runs():
     finished_run(runs, usage, "succeeded", 100, 10)
     finished_run(runs, usage, "failed", 300, 30, "InstallFailed")
     finished_run(runs, usage, "failed", 200, 20, "InstallFailed")
-    runs.create_run(REPO, "/home/dev/still-running")
+    runs.create_run(REPO, "/home/dev/still-running", None)
     metrics.add("rate_limit_hit", None)
     summary = metrics_summary(runs, usage, metrics, 10)
     assert (summary.finished_runs, summary.success_rate) == (3, 1 / 3)

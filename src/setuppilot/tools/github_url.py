@@ -32,7 +32,8 @@ def parse_github_url(text: str) -> RepoRef:
     match = _GITHUB_REPO.fullmatch(url) if len(url) <= _MAX_URL_LENGTH else None
     if match is None or match["name"] in {".", ".."}:
         raise BadURL(
-            "Please give a public GitHub repo URL like https://github.com/owner/repo.",
+            "Please give a public GitHub repo URL like https://github.com/owner/repo, or sign in "
+            "with GitHub in the web app for a private one.",
             details=f"Not accepted: {url[:_MAX_URL_LENGTH]!r}. Only https://github.com/<owner>/<repo>"
             " works: no other sites, no http, no extra path like /tree/main, no ? or #.",
         )

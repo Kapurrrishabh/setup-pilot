@@ -205,7 +205,7 @@ def test_show_prints_a_runs_timeline_tokens_and_error(
     from tests.conftest import TEST_DATABASE_URL
 
     runs = PostgresRunStore(empty_pg)
-    run = runs.create_run("https://github.com/psf/requests", "/home/dev/work")
+    run = runs.create_run("https://github.com/psf/requests", "/home/dev/work", None)
     runs.add_step(Step(run.id, "clone", "git", {}, "Cloned.", True, None, 0, 900, 0, None))
     runs.add_step(
         Step(run.id, "execute", "uv", {}, "exit 1", False, "InstallFailed", 1, 50, 0, None)
@@ -262,7 +262,7 @@ def test_resume_refuses_a_cancelled_run(in_empty_project, monkeypatch, capsys, e
 
     monkeypatch.setenv("SUPABASE_DB_URL", TEST_DATABASE_URL)
     runs = PostgresRunStore(empty_pg)
-    run = runs.create_run("https://github.com/someone/demo", "/home/dev/work")
+    run = runs.create_run("https://github.com/someone/demo", "/home/dev/work", None)
     runs.set_status(run.id, "cancelled", "RunCancelled", "You cancelled this run.")
     use_fake_agent(monkeypatch, make_repo(in_empty_project / "source", {"requirements.txt": ""}))
     code = run_cli_with_answers(monkeypatch, [], ["resume", run.id])

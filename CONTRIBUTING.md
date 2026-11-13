@@ -33,8 +33,17 @@ must end in `_test`, because the tests empty every table. Never point it at Supa
   Never add a way around them.
 - A new allowed command needs safe and unsafe cases in `tests/test_commands.py`, and
   `src/setuppilot/guardrails/` must stay at 90% test coverage or more.
-- Never log or print secrets; pass text through `redact`.
-- Tests must not need the internet or API keys; the LLM is always faked.
+- Repo text and AI text are untrusted. Send repo text to the LLM only inside `data_block`. An AI
+  command goes through `validate_ai_command` and the user's approval like any other, and AI text
+  never decides "verified".
+- In the web pages, show repo and AI text with `textContent` only, and make a link only from a
+  URL that starts with `https://github.com/`.
+- Never log or print secrets; pass text through `redact`. The GitHub token and the browser's
+  binding key never go into a page, a log, a prompt, the database or a command's environment.
+- Tests must not need the internet or API keys; the LLM and GitHub are always faked
+  (`tests/fakes.py`, `tests/github_fakes.py`).
+- Code for one system only (Windows, macOS or Linux) keeps its decisions in pure functions, so a
+  test can run them on any system; the Windows CI job runs the rest.
 - Text that users see is plain, simple English.
 - Keep each pull request to one change, with a short message that says why.
 

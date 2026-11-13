@@ -14,7 +14,7 @@ from setuppilot.chat.bot import (
     retrieve,
 )
 from setuppilot.chat.embed import Embedder
-from setuppilot.chat.repos import index_github_repo, repo_key
+from setuppilot.chat.repos import index_for_chat, repo_key
 from setuppilot.config import GroqModel, Settings
 from setuppilot.db.stores import Stores
 from setuppilot.errors import BudgetExceeded, LLMUnavailable, SetupPilotError
@@ -30,6 +30,7 @@ from setuppilot.evaluation.chat_eval import (
 )
 from setuppilot.llm.client import LLMClient
 from setuppilot.llm.transport import Messages, Reply, ResponseFormat
+from setuppilot.tools.clone import GitHubAccess, public_github
 
 Mode = Literal["full", "retrieval", "replay"]
 _RETRIEVAL_NOTE = (
@@ -72,8 +73,9 @@ def run_chat_eval(
             f"Carrying on: {len(done)} questions were scored by an earlier run ({progress}). If "
             "chat settings changed since, delete that file and re-index each repo first."
         )
+    github = public_github()
     for url in dict.fromkeys(c.repo_url for c in cases):
-        _make_sure_indexed(settings, stores, url, embedder)
+        _make_sure_indexed(settings, stores, url, github, embedder)
     bot = RepoChatbot(settings.chat, stores.chat_index, embedder, llm) if llm else None
     for case in cases:
         if (case.repo_url, case.question) in done:
@@ -113,10 +115,12 @@ def run_chat_eval(
     return scores
 
 
-def _make_sure_indexed(settings: Settings, stores: Stores, url: str, embedder: Embedder) -> None:
+def _make_sure_indexed(
+    settings: Settings, stores: Stores, url: str, github: GitHubAccess, embedder: Embedder
+) -> None:
     key, index = repo_key(url), stores.chat_index
     is_current = key in index.repos(viewer_github_id=None) and (
         index.repo(key, viewer_github_id=None).embedding_model == embedder.model_name
     )
     if not is_current:
-        index_github_repo(settings, url, embedder, index)
+        index_for_chat(settings, url, github, "public", embedder, index)

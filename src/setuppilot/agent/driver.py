@@ -8,6 +8,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command
 
 from setuppilot.agent.graph import AgentDeps, Verification, build_graph
+from setuppilot.db.runs import run_access
 from setuppilot.errors import NotFound, SetupPilotError
 from setuppilot.logging_setup import run_id_var
 from setuppilot.tools.clone import CloneRequest
@@ -64,9 +65,17 @@ class SetupAgent:
         self._recursion_limit = deps.settings.agent.max_steps + 10
 
     def start(
-        self, repo_url: str, dest_dir: str, use_docker: bool, request: CloneRequest
+        self,
+        repo_url: str,
+        dest_dir: str,
+        use_docker: bool,
+        owner_github_id: int | None,
+        subdir: str | None,
     ) -> Waiting | Finished:
-        run = self._deps.runs.create_run(repo_url, dest_dir)
+        """owner_github_id is the signed-in GitHub user, or None for a public repo, as in
+        RunManager.start."""
+        request = CloneRequest(run_access(owner_github_id), subdir)
+        run = self._deps.runs.create_run(repo_url, dest_dir, owner_github_id)
         return self.begin(run.id, repo_url, dest_dir, use_docker, request)
 
     def begin(

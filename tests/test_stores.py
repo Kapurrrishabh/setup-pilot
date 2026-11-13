@@ -49,7 +49,7 @@ def usage(run_id, tokens, at, is_cached=False):
 
 def test_new_run_reads_back_as_running(stores):
     runs, _, _ = stores
-    created = runs.create_run(REPO, "/home/dev/work")
+    created = runs.create_run(REPO, "/home/dev/work", None)
     got = runs.get_run(created.id)
     assert (got.repo_url, got.dest_dir, got.status, got.finished_at) == (
         REPO,
@@ -71,7 +71,7 @@ def test_a_run_keeps_the_github_user_it_belongs_to(stores):
 
 def test_failed_run_keeps_error_and_message(stores):
     runs, _, _ = stores
-    run_id = runs.create_run(REPO, "/home/dev/work").id
+    run_id = runs.create_run(REPO, "/home/dev/work", None).id
     runs.set_status(run_id, "failed", "InstallFailed", "pip install exited with 1")
     got = runs.get_run(run_id)
     assert (got.status, got.error_type, got.message) == (
@@ -84,7 +84,7 @@ def test_failed_run_keeps_error_and_message(stores):
 @pytest.mark.parametrize("status", ["succeeded", "failed", "cancelled"])
 def test_finished_run_gets_a_finish_time(stores, status):
     runs, _, _ = stores
-    run_id = runs.create_run(REPO, "/home/dev/work").id
+    run_id = runs.create_run(REPO, "/home/dev/work", None).id
     runs.set_status(run_id, status, None, None)
     assert runs.get_run(run_id).finished_at is not None
 
@@ -92,7 +92,7 @@ def test_finished_run_gets_a_finish_time(stores, status):
 @pytest.mark.parametrize("status", ["running", "waiting_approval"])
 def test_unfinished_run_has_no_finish_time(stores, status):
     runs, _, _ = stores
-    run_id = runs.create_run(REPO, "/home/dev/work").id
+    run_id = runs.create_run(REPO, "/home/dev/work", None).id
     runs.set_status(run_id, status, None, None)
     assert runs.get_run(run_id).finished_at is None
 
@@ -100,7 +100,7 @@ def test_unfinished_run_has_no_finish_time(stores, status):
 @pytest.mark.parametrize("late", ["running", "waiting_approval", "succeeded", "failed"])
 def test_a_cancelled_run_stays_cancelled_when_a_worker_updates_it_late(stores, late):
     runs, _, _ = stores
-    run_id = runs.create_run(REPO, "/home/dev/work").id
+    run_id = runs.create_run(REPO, "/home/dev/work", None).id
     runs.set_status(run_id, "cancelled", "RunCancelled", "You cancelled this run.")
     runs.set_status(run_id, late, None, None)
     assert runs.get_run(run_id).status == "cancelled"
@@ -109,7 +109,7 @@ def test_a_cancelled_run_stays_cancelled_when_a_worker_updates_it_late(stores, l
 @pytest.mark.parametrize("status", get_args(RunStatus))
 def test_every_run_status_can_be_saved(stores, status):
     runs, _, _ = stores
-    run_id = runs.create_run(REPO, "/home/dev/work").id
+    run_id = runs.create_run(REPO, "/home/dev/work", None).id
     runs.set_status(run_id, status, None, None)
     assert runs.get_run(run_id).status == status
 
@@ -129,14 +129,14 @@ def test_step_for_unknown_run_raises_lookup_error(stores):
 
 def test_step_arguments_that_are_not_json_are_refused(stores):
     runs, _, _ = stores
-    run_id = runs.create_run(REPO, "/home/dev/work").id
+    run_id = runs.create_run(REPO, "/home/dev/work", None).id
     with pytest.raises(TypeError):
         runs.add_step(step(run_id, arguments={"path": object()}))
 
 
 def test_deleted_run_and_its_steps_are_gone(stores):
     runs, _, _ = stores
-    run_id = runs.create_run(REPO, "/home/dev/work").id
+    run_id = runs.create_run(REPO, "/home/dev/work", None).id
     runs.add_step(step(run_id))
     runs.delete_run(run_id)
     with pytest.raises(LookupError):
@@ -152,7 +152,7 @@ def test_status_of_unknown_run_raises_lookup_error(stores):
 
 def test_steps_come_back_in_order_with_every_field(stores):
     runs, _, _ = stores
-    run_id = runs.create_run(REPO, "/home/dev/work").id
+    run_id = runs.create_run(REPO, "/home/dev/work", None).id
     first = Step(run_id, "clone", "git", {"depth": 1}, "cloned", True, None, 0, 1200, 0, None)
     second = Step(
         run_id, "plan", "llm", {"k": [1, 2]}, "3 steps", False, "LLMUnavailable", None, 50, 420, "m"
@@ -164,7 +164,7 @@ def test_steps_come_back_in_order_with_every_field(stores):
 
 def test_tokens_are_summed_per_run(stores):
     runs, usage_store, _ = stores
-    run_id = runs.create_run(REPO, "/home/dev/work").id
+    run_id = runs.create_run(REPO, "/home/dev/work", None).id
     now = datetime.now(UTC)
     usage_store.add(usage(run_id, 100, now))
     usage_store.add(usage(run_id, 50, now))
@@ -198,13 +198,13 @@ def test_cache_keeps_the_first_reply_for_a_key(stores):
 
 def test_runs_are_listed_newest_first_up_to_the_limit(stores):
     runs, _, _ = stores
-    ids = [runs.create_run(REPO, f"/home/dev/{n}").id for n in range(3)]
+    ids = [runs.create_run(REPO, f"/home/dev/{n}", None).id for n in range(3)]
     assert [r.id for r in runs.list_runs(2)] == [ids[2], ids[1]]
 
 
 def test_metric_events_are_counted_by_name(runs_and_metrics):
     runs, metrics = runs_and_metrics
-    run_id = runs.create_run(REPO, "/home/dev/work").id
+    run_id = runs.create_run(REPO, "/home/dev/work", None).id
     metrics.add("rate_limit_hit", run_id)
     metrics.add("rate_limit_hit", None)
     metrics.add("small_model_fallback", run_id)
@@ -213,7 +213,7 @@ def test_metric_events_are_counted_by_name(runs_and_metrics):
 
 def test_tokens_for_many_runs_come_back_in_one_call(stores):
     runs, usage_store, _ = stores
-    first = runs.create_run(REPO, "/home/dev/a").id
-    second = runs.create_run(REPO, "/home/dev/b").id
+    first = runs.create_run(REPO, "/home/dev/a", None).id
+    second = runs.create_run(REPO, "/home/dev/b", None).id
     usage_store.add(usage(first, 70, datetime.now(UTC)))
     assert usage_store.tokens_for_runs([first, second]) == {first: 70, second: 0}

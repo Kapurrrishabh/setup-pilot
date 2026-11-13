@@ -20,7 +20,6 @@ from setuppilot.evaluation.chat_eval import load_chat_cases
 from setuppilot.evaluation.setup_eval import load_setup_cases
 from setuppilot.llm.groq import build_llm_client
 from setuppilot.logging_setup import setup_logging
-from setuppilot.tools.clone import CloneRequest
 from setuppilot.web.serve import serve
 
 # PROVISIONAL: gpt-oss reasoning tokens count toward this, so leave room past the answer.
@@ -131,8 +130,8 @@ def set_up_repo(settings: Settings, args: argparse.Namespace) -> bool:
     agent = make_agent(settings, stores)
     outcome: Waiting | Stopped | Finished
     if args.command == "run":
-        request = CloneRequest("public", args.subdir)
-        outcome = agent.start(args.repo_url, resolve_destination(args.dest), args.docker, request)
+        dest = resolve_destination(args.dest)
+        outcome = agent.start(args.repo_url, dest, args.docker, None, args.subdir)
     else:
         if stores.runs.get_run(args.run_id).status == "cancelled":
             print("This run was cancelled. Start a new run instead.", file=sys.stderr)
@@ -182,7 +181,7 @@ def check_database(settings: Settings) -> None:
     if stores.database_warning:
         print(stores.database_warning, file=sys.stderr)
         raise SystemExit(1)
-    run = stores.runs.create_run("https://github.com/setuppilot/db-check", "db-check")
+    run = stores.runs.create_run("https://github.com/setuppilot/db-check", "db-check", None)
     status = stores.runs.get_run(run.id).status
     stores.runs.delete_run(run.id)
     print(f"Database OK: wrote run {run.id}, read it back ({status}) and deleted it.")

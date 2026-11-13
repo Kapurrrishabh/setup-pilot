@@ -22,8 +22,8 @@ ANALYZE_SYSTEM = (
     "Choose package_manager from lock files first, then manifests, then CI, then the README. A "
     'Python project with no lock file uses "pip". Use "none" only when there is nothing to '
     'install, and "other" for any other tool.\n'
-    "steps run in order from the project folder. A step may only use these commands, written "
-    "exactly in these forms; any other step must have is_manual true:\n{allowed}\n"
+    "steps run in order from the project folder. Each step must start with one of these forms, "
+    "word for word; any other step must have is_manual true:\n{allowed}\n"
     "Never run pip, python, npx or a script directly: Python packages go into .venv through "
     "the uv forms above, and the program under .venv is the only python allowed.\n"
     "verify steps check that the install worked (a build, a dependency check or an import) and "

@@ -53,9 +53,7 @@ class Step:
 
 
 class RunStore(Protocol):
-    def create_run(
-        self, repo_url: str, dest_dir: str, owner_github_id: int | None = None
-    ) -> Run: ...
+    def create_run(self, repo_url: str, dest_dir: str, owner_github_id: int | None) -> Run: ...
     def get_run(self, run_id: str) -> Run: ...
     def list_runs(self, limit: int) -> list[Run]: ...
     def set_status(
@@ -75,7 +73,7 @@ class InMemoryRunStore:
         self._runs: dict[str, Run] = {}
         self._steps: list[Step] = []
 
-    def create_run(self, repo_url: str, dest_dir: str, owner_github_id: int | None = None) -> Run:
+    def create_run(self, repo_url: str, dest_dir: str, owner_github_id: int | None) -> Run:
         run = Run(
             str(uuid.uuid4()),
             repo_url,

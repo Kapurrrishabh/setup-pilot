@@ -73,7 +73,7 @@ from setuppilot.setup.plans import (
     is_installable_project,
     quiet_checks,
 )
-from setuppilot.tools.clone import CloneRequest
+from setuppilot.tools.clone import CloneRequest, RepoAccess
 from setuppilot.tools.compose import find_compose_files
 from setuppilot.tools.detect import Detection, Stack, StackCandidate, detect_stacks
 from setuppilot.tools.github_url import RepoRef, parse_github_url
@@ -109,7 +109,7 @@ class RunState(TypedDict, total=False):
     repo_url: str
     dest_dir: str
     use_docker: bool
-    access: Literal["public", "github"]
+    access: RepoAccess
     # The project folder: what to check out, then the sub-project that was picked.
     subdir: str | None
     repo_dir: str
@@ -675,6 +675,7 @@ def _plan(deps: AgentDeps, state: RunState) -> tuple[dict, StepNote]:
         "plan": plan,
         "manual_steps": merged.manual_steps,
         "start_command": project.start_command if project else None,
+        "notes": list(state.get("notes", [])) + merged.notes,
         "next_index": 0,
     }
     pending = sum(p["status"] == "pending" for p in plan)

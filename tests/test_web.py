@@ -398,7 +398,7 @@ def test_runs_and_metrics_pages_show_plain_words_not_stored_codes(web):
 
 
 def test_a_run_that_was_running_when_the_app_started_shows_as_paused(web):
-    run = web[3].runs.create_run(URL, str(web[2] / "dest"))
+    run = web[3].runs.create_run(URL, str(web[2] / "dest"), None)
     web[3].runs.set_status(run.id, "running", None, None)
     # No agent is needed: shown_status never reaches it.
     restarted = RunManager(None, web[3].runs, CommandTracker())
@@ -406,7 +406,7 @@ def test_a_run_that_was_running_when_the_app_started_shows_as_paused(web):
 
 
 def test_a_run_another_process_is_working_on_shows_working_and_cannot_be_carried_on(web):
-    run = web[3].runs.create_run(URL, str(web[2] / "dest"))
+    run = web[3].runs.create_run(URL, str(web[2] / "dest"), None)
     web[3].runs.set_status(run.id, "running", None, None)
     page = get(web, "/runs").get_data(as_text=True)
     assert 'data-status="running">Working</span>' in page and ">Paused</span>" not in page
@@ -435,7 +435,7 @@ def test_run_view_names_the_cloned_repo_folder_not_the_folder_the_user_picked(we
 
 
 def test_run_view_names_no_repo_folder_before_the_repo_was_downloaded(web):
-    run = web[3].runs.create_run(URL, str(web[2] / "dest"))
+    run = web[3].runs.create_run(URL, str(web[2] / "dest"), None)
     assert get(web, f"/api/runs/{run.id}").get_json()["repo_dir"] is None
 
 
@@ -569,7 +569,7 @@ def test_cancel_stops_the_command_the_run_is_running(tmp_path):
             stopped.set()
 
     runs, tracker = InMemoryRunStore(), CommandTracker()
-    run = runs.create_run(URL, str(tmp_path))
+    run = runs.create_run(URL, str(tmp_path), None)
     token = run_id_var.set(run.id)
     tracker.track(FakeTree())
     run_id_var.reset(token)

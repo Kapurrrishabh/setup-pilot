@@ -14,7 +14,6 @@ from setuppilot.db.runs import RunStore
 from setuppilot.guardrails.commands import ExecTarget
 from setuppilot.guardrails.docker_mode import exec_target
 from setuppilot.llm.usage import UsageStore
-from setuppilot.tools.clone import CloneRequest
 
 _COLUMNS = ("Repo", "Detected", "Stack right", "Install right", "Verified", "Error",
             "Time (s)", "Tokens", "Approvals")  # fmt: skip
@@ -94,7 +93,7 @@ def run_setup_case(
     target = exec_target(host, use_docker, case.expected_manager)
     started = clock()
     outcome: Waiting | Finished = agent.start(
-        case.url, str(dest), use_docker=use_docker, request=CloneRequest("public", None)
+        case.url, str(dest), use_docker=use_docker, owner_github_id=None, subdir=None
     )
     approvals, installs = 0, []
     while isinstance(outcome, Waiting):

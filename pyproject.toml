@@ -82,7 +82,7 @@ select = ["E", "F", "I", "B", "UP", "SIM", "S", "PLE"]
 "tests/**" = ["S101", "S104", "S106", "S108", "S603", "S607"]
 
 [tool.mypy]
-files = ["src"]
+files = ["src", "scripts/acceptance.py"]
 python_version = "3.12"
 
 [tool.pytest.ini_options]

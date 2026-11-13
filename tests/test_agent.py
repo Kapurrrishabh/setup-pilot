@@ -15,7 +15,6 @@ from setuppilot.config import load_settings
 from setuppilot.db.runs import InMemoryRunStore
 from setuppilot.guardrails.commands import VENV_PYTHON
 from setuppilot.guardrails.runner import CommandOutput
-from setuppilot.tools.clone import CloneRequest
 from setuppilot.tools.prereqs import TOOLS, Probe
 from tests.fakes import (
     FakeTransport,
@@ -108,8 +107,7 @@ URL = "https://github.com/someone/demo"
 
 
 def start(agent, tmp_path, use_docker=False):
-    request = CloneRequest("public", None)
-    return agent.start(URL, str(tmp_path / "dest"), use_docker, request)
+    return agent.start(URL, str(tmp_path / "dest"), use_docker, None, None)
 
 
 def approve_all(agent, outcome, stop_at=None):
@@ -1061,15 +1059,14 @@ def test_a_picked_sub_project_is_planned_and_run_inside_its_folder(tmp_path):
 def test_a_sub_folder_given_at_the_start_is_the_only_project_offered(tmp_path):
     runner = FakeRunner()
     agent, _ = make_agent(tmp_path, MONOREPO, runner=runner)
-    request = CloneRequest("public", "web")
-    outcome = agent.start(URL, str(tmp_path / "dest"), False, request)
+    outcome = agent.start(URL, str(tmp_path / "dest"), False, None, "web")
     assert approve_all(agent, outcome).stack == "node/npm"
     assert set(runner.cwds) == {(tmp_path / "dest" / "demo" / "web").resolve()}
 
 
 def test_a_sub_folder_that_is_not_in_the_repo_says_so(tmp_path):
     agent, _ = make_agent(tmp_path, MONOREPO)
-    outcome = agent.start(URL, str(tmp_path / "dest"), False, CloneRequest("public", "api"))
+    outcome = agent.start(URL, str(tmp_path / "dest"), False, None, "api")
     assert outcome.error["message"] == "The folder api is not in this repo."
 
 
@@ -1090,15 +1087,23 @@ def test_a_sub_project_that_ships_its_own_node_modules_is_refused(tmp_path):
     assert outcome.error["error_type"] == "CommandBlocked" and runner.texts == []
 
 
-@pytest.mark.parametrize(("access", "calls"), [("public", 2), ("github", 4)])
-def test_a_private_repos_text_never_goes_into_the_shared_llm_cache(tmp_path, access, calls):
+@pytest.mark.parametrize(("owner", "calls"), [(None, 2), (7, 4)])
+def test_a_private_repos_text_never_goes_into_the_shared_llm_cache(tmp_path, owner, calls):
     transport = FakeTransport(*[analysis_reply(ai_project()), reply("Report.")] * 2)
     llm = make_client(transport)
     for name in ("first", "second"):
         agent, _ = make_agent(tmp_path / name, PIP_REPO, llm=llm)
         dest = tmp_path / name / "dest"
-        approve_all(agent, agent.start(URL, str(dest), False, CloneRequest(access, None)))
+        approve_all(agent, agent.start(URL, str(dest), False, owner, None))
     assert len(transport.calls) == calls
+
+
+@pytest.mark.parametrize(("owner", "access"), [(None, "public"), (7, "github")])
+def test_a_run_started_through_the_sign_in_is_saved_for_its_owner_only(tmp_path, owner, access):
+    agent, deps = make_agent(tmp_path, PIP_REPO)
+    outcome = agent.start(URL, str(tmp_path / "dest"), False, owner, None)
+    run = deps.runs.get_run(outcome.run_id)
+    assert (run.owner_github_id, run.access) == (owner, access)
 
 
 def test_a_run_paused_at_approve_before_v2_carries_on(tmp_path):
@@ -1108,7 +1113,7 @@ def test_a_run_paused_at_approve_before_v2_carries_on(tmp_path):
     runner = FakeRunner()
     agent, deps = make_agent(tmp_path, PIP_REPO, runner=runner, saver=saver)
     repo = make_repo(tmp_path / "dest" / "demo", PIP_REPO)
-    run = deps.runs.create_run(URL, str(tmp_path / "dest"))
+    run = deps.runs.create_run(URL, str(tmp_path / "dest"), None)
     candidate = {"stack": "python", "manager": "pip", "evidence": ["requirements.txt"],
                  "version_hint": None}  # fmt: skip
     v1_state = {
@@ -1166,7 +1171,20 @@ def test_a_flag_the_ai_adds_to_setuppilots_install_never_runs(tmp_path):
     outcome = approve_all(agent, start(agent, tmp_path))
     assert outcome.is_verified and PIP_INSTALL in runner.texts
     assert not any("evil" in text for text in runner.texts)
-    assert f"- {injected} (from the AI): blocked (not allowed)" in outcome.report
+    assert f"Note: Not used: the AI's `{injected}`, which adds --extra-index-url" in outcome.report
+
+
+def test_the_ais_short_copies_of_setuppilots_commands_are_not_listed_as_blocked(tmp_path):
+    # Real Groq on pypa/sampleproject: "2 AI commands not allowed", both SetupPilot's own.
+    steps = [ai_step("uv venv", phase="prepare"), ai_step("uv pip install --python .venv"),
+             ai_step("uv pip check --python .venv", phase="verify"),
+             ai_step('.venv/bin/python -c "import demo"', phase="verify")]  # fmt: skip
+    llm = make_client(FakeTransport(analysis_reply(ai_project(steps=steps)), reply("")))
+    agent, deps = make_agent(tmp_path, PACKAGE_REPO, llm=llm)
+    outcome = approve_all(agent, start(agent, tmp_path))
+    (plan,) = [s for s in deps.runs.list_steps(outcome.run_id) if s.name == "plan"]
+    assert outcome.is_verified and plan.result_summary == "3 commands to approve."
+    assert "blocked" not in outcome.report and "Not used" not in outcome.report
 
 
 def test_a_token_typed_into_a_failed_command_never_reaches_the_ai(tmp_path):
@@ -1261,7 +1279,7 @@ def test_a_run_paused_at_choose_stack_before_v2_offers_what_v1_offered(tmp_path)
     saver = InMemorySaver()
     agent, deps = make_agent(tmp_path, files, saver=saver)
     repo = make_repo(tmp_path / "dest" / "demo", files)
-    run = deps.runs.create_run(URL, str(tmp_path / "dest"))
+    run = deps.runs.create_run(URL, str(tmp_path / "dest"), None)
     found = [("python", "pip", "requirements.txt"), ("node", "npm", "package-lock.json"),
              ("docker", "dockerfile", "Dockerfile")]  # fmt: skip
     candidates = [{"stack": s, "manager": m, "evidence": [e], "version_hint": None}

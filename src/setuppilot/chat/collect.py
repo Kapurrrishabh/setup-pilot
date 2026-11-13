@@ -1,16 +1,13 @@
-"""Pick the repo files the chatbot may learn from, as plain text documents, from a clone or from a
-GitHub tarball held in memory."""
+"""Pick the repo files the chatbot may learn from, as plain text documents, from a clone or from
+files read from GitHub."""
 
-import gzip
-import io
 import re
-import tarfile
-import zlib
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from setuppilot.errors import CloneFailed
+from setuppilot.github.api import TreeEntry
 from setuppilot.tools.compose import COMPOSE_NAMES
 from setuppilot.tools.scan import SKIP_DIRS, RepoScan, decode_text
 
@@ -47,14 +44,6 @@ class Document:
     kind: DocumentKind
 
 
-@dataclass(frozen=True)
-class TarballLimits:
-    max_file_bytes: int
-    # Caps the unpacked size of the files kept, so a small archive cannot unpack into gigabytes.
-    max_total_bytes: int
-    tree_chars: int
-
-
 def collect_documents(scan: RepoScan, max_file_bytes: int, tree_chars: int) -> list[Document]:
     documents = [Document(TREE_PATH, scan.tree_summary(tree_chars), "tree")]
     for path in scan.files:
@@ -66,44 +55,21 @@ def collect_documents(scan: RepoScan, max_file_bytes: int, tree_chars: int) -> l
     return documents
 
 
-def documents_from_tarball(data: bytes, limits: TarballLimits) -> list[Document]:
-    """The same documents as collect_documents, read in one pass from a GitHub tarball (.tar.gz)
-    in memory. Nothing is written to disk, and links are never followed."""
-    paths: list[str] = []
-    documents: list[Document] = []
-    total = 0
-    try:
-        # Through GzipFile, not mode r|gz: tarfile alone takes a cut-short download as a
-        # normal end, and would index half the repo without a word.
-        with (
-            gzip.GzipFile(fileobj=io.BytesIO(data)) as unzipped,
-            tarfile.open(fileobj=unzipped, mode="r|") as archive,
-        ):
-            for member in archive:
-                if (path := _archive_path(member)) is None:
-                    continue
-                paths.append(path)
-                kind = file_kind(path)
-                if kind is None or member.size > limits.max_file_bytes:
-                    continue
-                total += member.size
-                if total > limits.max_total_bytes:
-                    raise CloneFailed(
-                        "This repo has too much text for the chatbot to read.",
-                        details=f"Its files add up to more than {limits.max_total_bytes:,} bytes, "
-                        "the limit for one download. Pick a smaller repo, or raise that limit.",
-                    )
-                file = archive.extractfile(member)
-                if file is not None and (document := _document(path, kind, file.read())):
-                    documents.append(document)
-    except (tarfile.TarError, EOFError, zlib.error, gzip.BadGzipFile) as error:
-        raise CloneFailed(
-            "GitHub's download of this repo could not be read.",
-            details=f"The .tar.gz archive is broken or cut short: {error}. Try again.",
-        ) from error
-    # Only the file list is used to write the tree; the archive has no folder on disk.
-    tree = RepoScan(Path(), tuple(paths), (), ()).tree_summary(limits.tree_chars)
-    return [Document(TREE_PATH, tree, "tree"), *documents]
+def documents_from_snapshot(
+    entries: Iterable[TreeEntry], files: Mapping[str, str], tree_chars: int
+) -> list[Document]:
+    """The documents collect_documents makes from a clone: the tree lists what scan_repo would
+    (no links, nothing in skipped folders)."""
+    paths = tuple(
+        e.path for e in entries if not e.is_link and SKIP_DIRS.isdisjoint(e.path.split("/")[:-1])
+    )
+    tree = RepoScan(Path(), paths, (), ()).tree_summary(tree_chars)
+    documents = [Document(TREE_PATH, tree, "tree")]
+    for path, text in sorted(files.items()):
+        kind = file_kind(path)
+        if kind is not None and (document := _document(path, kind, text.encode())) is not None:
+            documents.append(document)
+    return documents
 
 
 def file_kind(path: str) -> DocumentKind | None:
@@ -142,16 +108,3 @@ def _document(path: str, kind: DocumentKind, data: bytes) -> Document | None:
     ):
         return None
     return Document(path, text, kind)
-
-
-def _archive_path(member: tarfile.TarInfo) -> str | None:
-    """The member's path in the repo, or None for links, folders, odd names and skipped folders.
-    GitHub puts every file under one top folder named owner-repo-commit."""
-    parts = member.name.split("/")[1:]
-    is_kept = (
-        member.isreg()
-        and parts
-        and {"", ".", ".."}.isdisjoint(parts)
-        and SKIP_DIRS.isdisjoint(parts[:-1])
-    )
-    return "/".join(parts) if is_kept else None
