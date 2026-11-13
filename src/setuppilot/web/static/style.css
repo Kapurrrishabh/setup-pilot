@@ -90,6 +90,8 @@ main:focus { outline: none; }
 .card.attention { border-color: var(--primary); box-shadow: 0 0 0 3px var(--ring), var(--shadow); }
 .card-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-3); margin-bottom: var(--space-3); }
 .card-head h2 { margin: 0; }
+/* A sentence-long badge, like "The AI and the files did not fully agree", must wrap on a phone. */
+.card-head .badge { white-space: normal; max-width: 100%; }
 .empty { text-align: center; padding: var(--space-7) var(--space-5); }
 .empty .actions { justify-content: center; }
 .empty-mark { display: inline-grid; place-items: center; width: 44px; height: 44px; margin-bottom: var(--space-3); border-radius: 50%; background: var(--info-soft); color: var(--info); font-size: 22px; font-weight: 700; }
