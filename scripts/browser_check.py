@@ -26,6 +26,15 @@ SETUP_REPO = "https://github.com/pypa/sampleproject"
 CANCEL_REPO = "https://github.com/JedWatson/classnames"
 WAIT_MS = 300_000
 AXE_URL = "https://cdnjs.cloudflare.com/ajax/libs/axe-core/4.10.2/axe.min.js"
+# The deepest elements whose right edge is past the screen, as tag#id.class (right edge in px).
+WIDER_THAN_SCREEN = """() => [...document.querySelectorAll("body *")]
+  .filter((e) => e.getBoundingClientRect().right > innerWidth + 1
+    && ![...e.children].some((c) => c.getBoundingClientRect().right > innerWidth + 1))
+  .slice(0, 5)
+  .map((e) => e.tagName.toLowerCase() + (e.id ? "#" + e.id : "")
+    + (e.className ? "." + String(e.className).split(" ")[0] : "")
+    + " (" + Math.round(e.getBoundingClientRect().right) + ")")
+  .join(", ")"""
 AXE_PROBLEMS = (
     "axe.run().then(r => r.violations.map("
     "v => `${v.id}: ${v.nodes.map(n => n.target.join(' ')).join(', ')}`))"
@@ -852,9 +861,11 @@ def check_screens(browser: Browser, screens: Screens, shots: Path) -> None:
                     page.set_viewport_size({"width": wide, "height": height})
                     page.wait_for_timeout(200)
                     scroll = page.evaluate("document.documentElement.scrollWidth")
+                    # Name what sticks out: some overflows show only with another system's fonts.
+                    wider = page.evaluate(WIDER_THAN_SCREEN) if scroll > wide else ""
                     check(
                         scroll <= wide,
-                        f"{name} fits {wide} px without scrolling sideways ({scroll})",
+                        f"{name} fits {wide} px without scrolling sideways ({scroll}) {wider}",
                     )
             context.close()
 
