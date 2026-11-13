@@ -200,6 +200,11 @@ label.filter { display: inline-flex; align-items: center; margin: 0; border: 1px
 .progress li.current { border-top-color: var(--primary); color: var(--text); font-weight: 600; }
 .progress li.stopped { border-top-color: var(--bad); color: var(--bad); font-weight: 600; }
 .progress li.cancelled { border-top-color: var(--text-3); color: var(--text); font-weight: 600; }
+/* Seven labels cannot fit a phone with every font; the line above names the current step. */
+@media (max-width: 560px) {
+  .progress li { padding-top: 0; }
+  .progress li span { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
 .now { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: var(--space-4) 0 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius); background: var(--info-soft); color: var(--info); font-size: var(--text-sm); font-weight: 500; }
 .now code { background: transparent; border-color: var(--info-border); color: inherit; }
 #now-text { flex: 1 1 0; min-width: 0; }

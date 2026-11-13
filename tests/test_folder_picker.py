@@ -114,7 +114,7 @@ def captured(monkeypatch):
 
 @pytest.mark.parametrize("name", ["osascript", "tkinter", "zenity", "kdialog"])
 def test_the_start_folder_is_only_ever_its_own_argument(captured, name):
-    pick_folder(FolderPicker(name, "/usr/bin/tool"), START, 5)
+    pick_folder(FolderPicker(name, "/usr/bin/tool.exe"), START, 5)
     ((args, _),) = captured
     holding = [arg for arg in args if str(START).rstrip("/") in arg]
     assert len(holding) == 1 and holding[0].removeprefix("--filename=").rstrip("/") == str(START)
@@ -130,7 +130,7 @@ def test_powershell_gets_the_start_folder_through_its_environment(captured, monk
 def test_the_window_gets_no_secrets(captured, monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "gsk_secret")
     monkeypatch.setenv("DISPLAY", ":1")
-    pick_folder(FolderPicker("zenity", "/usr/bin/zenity"), START, 5)
+    pick_folder(FolderPicker("zenity", "/usr/bin/zenity.exe"), START, 5)
     ((_, env),) = captured
     assert "GROQ_API_KEY" not in env and env["DISPLAY"] == ":1"
 
