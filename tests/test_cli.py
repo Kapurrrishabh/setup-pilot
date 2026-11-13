@@ -1,4 +1,5 @@
 import shutil
+from importlib.metadata import version
 
 import pytest
 
@@ -28,7 +29,8 @@ def test_version_comes_from_the_package(capsys):
     with pytest.raises(SystemExit) as exit_info:
         main(["--version"])
     assert exit_info.value.code == 0
-    assert capsys.readouterr().out.strip() == "setuppilot 0.1.0"
+    # The number comes from pyproject.toml, through the installed package.
+    assert capsys.readouterr().out.strip() == f"setuppilot {version('setuppilot')}"
 
 
 def test_running_outside_the_project_folder_is_a_friendly_error(tmp_path, monkeypatch, capsys):

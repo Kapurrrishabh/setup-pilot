@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 - not released yet
+## 0.2.0 - 2026-11-13
 
 Windows first, an AI that reads the repo before SetupPilot plans, GitHub sign-in, and a chatbot
 that understands code.
