@@ -6,8 +6,63 @@ Supabase:
 - **0.1** (2026-11-02), with **no Groq key**: the setup flow without the LLM, and chatbot *search*
   (retrieval) only.
 - **0.2** (2026-11-12): the chatbot's search was rebuilt and measured again on a bigger question
-  set, still without the LLM. The setup evaluation has not been run with v2 yet, with the AI on
-  or off (see "Not measured yet").
+  set, still without the LLM.
+- **0.2 with real Groq** (2026-11-13): the 18-repo setup evaluation with the AI on and off, and
+  the chatbot's full answers. Results are in `eval/results/v2-ai/`, `eval/results/v2-no-ai/` and
+  `eval/results/v2-chat/`.
+
+## Setup agent (0.2): 18 repos, AI on and off, real Groq
+
+`uv run setuppilot eval-setup`, run twice on the same 18 repos: once as shipped, and once with
+`agent.use_ai_planning: false`. The Mac had every tool except the .NET SDK and Maven (java-classmate
+brings its own `mvnw`). Go ran with `GOPROXY=direct`, because this network blocks
+proxy.golang.org.
+
+| | Stack right | Install right | Verified | Avg time | Avg tokens | Avg approvals |
+|---|---|---|---|---|---|---|
+| AI on | **18/18** | 17/18 | 17/18 | 55 s | 3,663 | 1.7 |
+| AI off | **18/18** | 17/18 | 17/18 | 5 s | 526 | 1.7 |
+
+- **The one miss is the same in both**: ardalis/GuardClauses (.NET) stops at "missing tool",
+  because the .NET SDK is not installed here. On Windows SetupPilot offers to install it with
+  winget; the evaluation always answers Stop to install questions, so it never installs anything.
+- **On these repos the AI does not change the outcome.** All 18 use stacks SetupPilot already has
+  hand-written plans and checks for, so the AI and the files agree. What the AI adds shows up
+  elsewhere: the analysis card, sub-projects in monorepos (fastapi/full-stack-fastapi-template has
+  a Python backend, a Bun frontend and Compose), the start command, and diagnosis and fixes when a
+  command fails. This set does not measure those well; a set of unusual repos is future work.
+- **Cost.** A run with the AI makes 2 LLM calls (analysis, report) and about 3,700 tokens, inside
+  the 30,000-token budget and below the 3 to 6 calls the spec allows. The extra time is mostly waiting for Groq's free-tier
+  limit of 8,000 tokens a minute, not the LLM itself.
+- **Bug found and fixed by this run.** In the first AI-on pass, 2 repos lost the AI analysis: the
+  model used a tool or service name outside the schema's list (Maven, a frontend service), and
+  Groq's strict mode refused the whole answer. Those names are now plain text to Groq and mapped
+  in code; both repos then got the analysis (4,440 and 5,657 tokens) and still verified.
+
+## Chatbot (0.2): full answers with real Groq
+
+`uv run setuppilot eval-chat --mode full`: the 74 questions, each answered by the LLM from the
+retrieved files (follow-ups are asked after their earlier question, in the same chat).
+
+| Kind | Questions | Correct | Grounded | Correct "I don't know" |
+|---|---|---|---|---|
+| General (setup, license, layout) | 25 | **23/25 (92%)** | **22/25 (88%)** | - |
+| Code | 28 | 19/28 (68%) | 19/28 (68%) | - |
+| Follow-up | 11 | **9/11 (82%)** | **9/11 (82%)** | - |
+| Not in the repo | 5 | - | - | **5/5** |
+| Off-topic | 5 | - | - | **5/5** |
+| **All answerable** | 64 | **51/64 (80%)** | 50/64 (78%) | **10/10 (100%)** |
+
+About 1,260 tokens per question. "Grounded" means the answer cites the file the fact is in.
+
+- **General questions and follow-ups meet the 80% target; code questions do not (68%).** Two
+  kinds of misses: (1) right answers in other words, such as "returns the number plus one" for
+  `add_one` (the scorer wants the exact words); (2) real misses where the fact is a default value
+  inside a class or function definition (itsdangerous `Signer`'s default salt and key derivation,
+  cors's default methods, slugify's error for a non-string). There the bot said it could not find
+  the answer instead of guessing, which is the safe failure. Better chunking of class bodies and
+  defaults is the next step.
+- **It never made up an answer** for the 10 questions the repo cannot answer or that are off-topic.
 
 Raw results of the 0.1 runs: `eval/results/*.jsonl` (one line per repo or question) and the
 matching `.md` tables.
@@ -149,14 +204,11 @@ questions, short questions that share few words with the README.
 
 ## Not measured yet
 
-- **Setup with the AI on and off** (next): run `uv run setuppilot eval-setup` on all 18 repos
-  with the AI on, then again with `agent.use_ai_planning: false`, on Windows and on Linux, and
-  compare stack, install and verified, plus tokens and approvals per run. So far there are only
-  single real runs: sampleproject was verified with 2 LLM calls and about 3,500 tokens, and gpt-2
-  recovered with 2 AI fixes in 5 calls and about 7,200 tokens.
-- **Chatbot full answers and "I don't know"** (next): search alone cannot tell an unanswerable
-  question from an answerable one, so this depends on the LLM saying `found: false`. Run
-  `uv run setuppilot eval-chat` with a Groq key. Every answer is cached, so `--mode replay`
+- **The setup evaluation on Windows and Linux**: run `.\test.ps1 setup` (Windows) or
+  `./test.sh setup` and compare with the macOS table above.
+- **Chatbot replay**: `uv run setuppilot eval-chat --mode replay` needs the answer cache to
+  survive a restart, which needs Supabase. Run `uv run setuppilot eval-chat` with a Groq key to
+  measure the answers again after a change. Every answer is cached, so `--mode replay`
   repeats it for free, and a stopped run carries on when re-run. Scores are saved per question in
   `eval/results/chat-<mode>.jsonl`. After you change chat settings, delete that file first, or the
   old scores are reused (the run prints how many). After a change to chunk or embedding settings,

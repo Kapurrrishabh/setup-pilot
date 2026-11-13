@@ -397,9 +397,9 @@ App or another machine:
 
 | What | Why it is not done yet | How to run it |
 |---|---|---|
-| Real Groq calls: `ask`, the AI's plan, fixes and report in a run, tokens per run (the setup table's Tokens column; `setuppilot show <run id>` lists each call) | tried on a few repos only | `.\test.ps1 groq setup` |
-| The 18-repo setup evaluation with the AI on, and again with `agent.use_ai_planning: false`, on Windows and Linux | not run with v2 yet | `.\test.ps1 setup`, twice |
-| Chatbot full answers and "I don't know" (74 questions, target 80%+ grounded) | not run with a key yet | `.\test.ps1 chat` |
+| The 18-repo setup evaluation with the AI on, on Windows and Linux | run on macOS only (17/18 verified, the miss is a missing .NET SDK; see [eval/REPORT.md](eval/REPORT.md)) | `.\test.ps1 setup` |
+| A real failed install that the AI diagnoses and fixes, on Windows | tried on macOS only | set up a repo whose install fails, like openai/gpt-2 |
+| Chatbot full answers on another machine (74 questions) | run on macOS: 80% correct, 78% grounded, 10/10 "I don't know" | `.\test.ps1 chat` |
 | GitHub sign-in: sign in, list your repos, read a private repo, set up one private repo (this also checks that GitHub takes the sign-in as a git password) | needs your own GitHub App | the steps in [Sign in with GitHub](#sign-in-with-github), then set up a private repo |
 | Windows: installing a missing tool with winget, then Check again finding it | the Windows CI job does not install anything | on Windows without Node, set up `https://github.com/JedWatson/classnames` |
 | Real Supabase: tables, row level security, pause and resume across a restart, cached replay | no Supabase project yet | `.\test.ps1 supabase chat` |
@@ -488,4 +488,4 @@ keyboard only, and with a narrow window.
 | 10 | Evaluation: 15 setup repos (15/15 stacks, 15/15 verified), 30 chatbot questions (search 52% to 80%), guardrail coverage 100% (CI fails below 90%) | done; full chatbot answers need your key |
 | 11 | Docs: this README, security notes, evaluation report, demo script | done |
 | Final | Whole-project review (78 confirmed findings fixed or documented), web UI redesign, type checking, license, contributing guide, security scanning | done |
-| v2 | Windows first (Job Objects, safe `.cmd` launching, Windows paths), AI-first planning checked by SetupPilot's own plans, tool installs, AI diagnosis and fixes, sub-projects, .NET, Composer and Dart, GitHub sign-in with your own GitHub App, reading repos through the GitHub API, sub-folder clones, chatbot v2 (whole code files, word and meaning search, file:line sources, follow-ups), one test runner for every system | done; CI green on Linux and Windows; real GitHub App sign-in, winget installs and the v2 evaluations still to do |
+| v2 | Windows first (Job Objects, safe `.cmd` launching, Windows paths), AI-first planning checked by SetupPilot's own plans, tool installs, AI diagnosis and fixes, sub-projects, .NET, Composer and Dart, GitHub sign-in with your own GitHub App, reading repos through the GitHub API, sub-folder clones, chatbot v2 (whole code files, word and meaning search, file:line sources, follow-ups), one test runner for every system | done; CI green on Linux and Windows; real Groq evals on macOS: setup 17/18 verified with the AI on, chatbot 80% correct (code questions 68%); real GitHub App sign-in and winget installs still to do |
